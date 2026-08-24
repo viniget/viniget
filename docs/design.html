@@ -1,0 +1,426 @@
+<title>Viniget v1 Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+:root{
+  --paper:#FBF8F7; --raise:#FFFFFF; --sunk:#F3EDEC;
+  --ink:#241A1C; --body:#3D3033; --mute:#6B5F62; --faint:#9A8D90;
+  --rule:#E4DAD9; --rule-strong:#CFC0C0;
+  --wine:#7A2E3F; --wine-soft:#F2E4E7; --wine-line:#D8B9C1;
+  --pass:#2F6B4F; --pass-bg:#E6F0EA;
+  --warn:#8A6014; --warn-bg:#F6EEDD;
+  --fail:#8C3A2E; --fail-bg:#F7E6E2;
+  --shadow:0 1px 2px rgba(36,26,28,.05), 0 8px 24px -16px rgba(36,26,28,.22);
+  --measure:68ch;
+  --s1:.4rem; --s2:.75rem; --s3:1.15rem; --s4:1.8rem; --s5:2.75rem; --s6:4.25rem;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#171113; --raise:#1F1719; --sunk:#241B1E;
+    --ink:#F5EDEE; --body:#D8CACD; --mute:#A29296; --faint:#7A6B6F;
+    --rule:#332529; --rule-strong:#46343A;
+    --wine:#C25A70; --wine-soft:#2E1B21; --wine-line:#5B3540;
+    --pass:#6FBF95; --pass-bg:#16281F;
+    --warn:#D6A24C; --warn-bg:#2A2015;
+    --fail:#DE7C68; --fail-bg:#2C1A16;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#171113; --raise:#1F1719; --sunk:#241B1E;
+  --ink:#F5EDEE; --body:#D8CACD; --mute:#A29296; --faint:#7A6B6F;
+  --rule:#332529; --rule-strong:#46343A;
+  --wine:#C25A70; --wine-soft:#2E1B21; --wine-line:#5B3540;
+  --pass:#6FBF95; --pass-bg:#16281F;
+  --warn:#D6A24C; --warn-bg:#2A2015;
+  --fail:#DE7C68; --fail-bg:#2C1A16;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--body);
+  font-family:"Newsreader",Georgia,"Times New Roman",serif;
+  font-size:1.0625rem; line-height:1.68;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1140px; margin:0 auto; padding:0 var(--s4)}
+
+/* ---------- masthead ---------- */
+.mast{border-bottom:1px solid var(--rule); padding:var(--s6) 0 var(--s5)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.7rem; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--wine); margin:0 0 var(--s3);
+}
+h1{
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-weight:700; letter-spacing:-.028em; line-height:1.02;
+  font-size:clamp(2.6rem,7vw,4.4rem); color:var(--ink);
+  margin:0 0 var(--s3); text-wrap:balance;
+}
+.deck{
+  max-width:var(--measure); font-size:1.28rem; line-height:1.55;
+  color:var(--mute); margin:0;
+}
+.deck strong{color:var(--ink); font-weight:600}
+.meta{
+  display:flex; flex-wrap:wrap; gap:var(--s2) var(--s4); margin-top:var(--s4);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.74rem;
+  letter-spacing:.04em; color:var(--faint);
+}
+.meta b{color:var(--body); font-weight:500}
+
+/* ---------- sections ---------- */
+section{padding:var(--s6) 0; border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+h2{
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-weight:700; letter-spacing:-.02em; line-height:1.12;
+  font-size:clamp(1.6rem,3.4vw,2.1rem); color:var(--ink);
+  margin:0 0 var(--s2); text-wrap:balance; max-width:var(--measure);
+}
+h3{
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-weight:600; letter-spacing:-.012em; font-size:1.14rem; color:var(--ink);
+  margin:var(--s5) 0 var(--s2); max-width:var(--measure); text-wrap:balance;
+}
+.lede{max-width:var(--measure); color:var(--mute); font-size:1.12rem; margin:0 0 var(--s4)}
+p{max-width:var(--measure); margin:0 0 var(--s3)}
+p:last-child{margin-bottom:0}
+a{color:var(--wine); text-decoration-thickness:1px; text-underline-offset:2px}
+strong{color:var(--ink); font-weight:600}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.86em;
+  background:var(--sunk); border:1px solid var(--rule);
+  padding:.08em .34em; border-radius:3px; color:var(--ink);
+}
+
+/* measured tag — marks a claim backed by a harness run, not judgment */
+.tag{
+  display:inline-flex; align-items:center; gap:.35em; vertical-align:2px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.62rem; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--wine); background:var(--wine-soft);
+  border:1px solid var(--wine-line); border-radius:2px;
+  padding:.18em .45em; font-weight:500; white-space:nowrap;
+}
+.tag::before{content:"";width:4px;height:4px;background:var(--wine);border-radius:50%}
+
+/* ---------- evidence: breaks the prose measure ---------- */
+.ev{margin:var(--s4) 0; max-width:100%}
+.ev-cap{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.7rem; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 var(--s2);
+  display:flex; align-items:center; gap:var(--s2); flex-wrap:wrap;
+}
+.scroll{overflow-x:auto; border:1px solid var(--rule); border-radius:6px; background:var(--raise); box-shadow:var(--shadow)}
+table{border-collapse:collapse; width:100%; font-size:.86rem}
+th,td{
+  text-align:left; padding:.62rem .85rem; border-bottom:1px solid var(--rule);
+  white-space:nowrap;
+}
+th{
+  font-family:"IBM Plex Sans",system-ui,sans-serif; font-weight:600;
+  font-size:.72rem; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--mute); background:var(--sunk);
+}
+td{font-family:"IBM Plex Mono",ui-monospace,monospace; color:var(--body)}
+td.t{font-family:"Newsreader",Georgia,serif; font-size:.98rem; white-space:normal; min-width:15rem}
+tbody tr:last-child td{border-bottom:0}
+.num{text-align:right; font-variant-numeric:tabular-nums}
+.bar{position:relative}
+.bar span{position:absolute; inset:0 auto 0 0; background:var(--wine-soft); border-right:2px solid var(--wine-line); z-index:0}
+.bar em{position:relative; z-index:1; font-style:normal}
+
+.pill{
+  display:inline-block; font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.68rem; letter-spacing:.05em; padding:.2em .5em; border-radius:3px;
+  border:1px solid transparent; font-weight:500;
+}
+.p-pass{color:var(--pass); background:var(--pass-bg); border-color:color-mix(in srgb,var(--pass) 30%,transparent)}
+.p-warn{color:var(--warn); background:var(--warn-bg); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.p-fail{color:var(--fail); background:var(--fail-bg); border-color:color-mix(in srgb,var(--fail) 30%,transparent)}
+
+pre{
+  margin:0; padding:var(--s3) var(--s4); overflow-x:auto;
+  background:var(--raise); border:1px solid var(--rule); border-radius:6px;
+  box-shadow:var(--shadow);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.79rem; line-height:1.72;
+  color:var(--body); tab-size:2;
+}
+pre b{color:var(--ink); font-weight:600}
+pre .c{color:var(--faint)}
+pre .ok{color:var(--pass)}
+pre .wn{color:var(--warn)}
+pre .fl{color:var(--fail)}
+
+/* ---------- pipeline ---------- */
+.pipe{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:var(--s2); margin:var(--s4) 0;
+}
+.stage{
+  background:var(--raise); border:1px solid var(--rule); border-radius:6px;
+  padding:var(--s3); box-shadow:var(--shadow); position:relative; min-width:0;
+}
+.stage b{
+  display:block; font-family:"IBM Plex Sans",system-ui,sans-serif;
+  font-size:.92rem; font-weight:600; color:var(--ink); margin-bottom:.3em;
+  letter-spacing:-.01em;
+}
+.stage span{
+  display:block; font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.68rem; line-height:1.5; color:var(--mute);
+}
+.stage i{
+  position:absolute; top:var(--s2); right:var(--s2); font-style:normal;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.6rem;
+  color:var(--faint); letter-spacing:.08em;
+}
+
+/* ---------- rule cards ---------- */
+.rules{display:grid; gap:var(--s3); margin:var(--s4) 0}
+.rule{
+  background:var(--raise); border:1px solid var(--rule); border-left:3px solid var(--wine);
+  border-radius:0 6px 6px 0; padding:var(--s3) var(--s4); box-shadow:var(--shadow);
+}
+.rule h4{
+  font-family:"IBM Plex Sans",system-ui,sans-serif; font-size:1.02rem; font-weight:600;
+  color:var(--ink); margin:0 0 var(--s1); letter-spacing:-.01em;
+}
+.rule p{font-size:.99rem; margin:0; max-width:60ch; color:var(--mute)}
+.rule p + p{margin-top:var(--s2)}
+
+/* ---------- decisions ---------- */
+.dec{display:grid; gap:var(--s3); margin:var(--s4) 0}
+.dec > div{
+  display:grid; grid-template-columns:minmax(0,1fr); gap:var(--s2);
+  padding:var(--s3) 0; border-top:1px solid var(--rule);
+}
+.dec > div:first-child{border-top:0}
+.dec dt{
+  font-family:"IBM Plex Sans",system-ui,sans-serif; font-weight:600;
+  color:var(--ink); font-size:1.02rem;
+}
+.dec dd{margin:0; color:var(--mute); font-size:1rem; max-width:64ch}
+.dec .cost{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.72rem;
+  color:var(--wine); letter-spacing:.04em; display:block; margin-top:var(--s1);
+}
+@media (min-width:760px){
+  .dec > div{grid-template-columns:14rem minmax(0,1fr); gap:var(--s4); align-items:baseline}
+}
+
+ul{max-width:var(--measure); padding-left:1.1rem; margin:0 0 var(--s3)}
+li{margin-bottom:var(--s2)}
+li::marker{color:var(--wine-line)}
+
+.foot{padding:var(--s5) 0 var(--s6); color:var(--faint); font-size:.85rem}
+.foot p{max-width:var(--measure)}
+
+@media (prefers-reduced-motion:no-preference){
+  .stage,.rule{transition:border-color .18s ease}
+}
+.stage:hover,.rule:hover{border-color:var(--rule-strong)}
+:focus-visible{outline:2px solid var(--wine); outline-offset:2px; border-radius:2px}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Design document · v1 scope</p>
+  <h1>Viniget</h1>
+  <p class="deck">Winget has <strong>14,586 packages</strong> carrying machine-readable silent-install metadata. Nobody has plumbed that into Wine. Viniget does — for productivity software, on system Wine, with a compatibility database built by actually installing everything.</p>
+  <div class="meta">
+    <span>target <b>Linux + Wine 11.16</b></span>
+    <span>catalog <b>12,401 families</b></span>
+    <span>scope <b>no games · no Proton</b></span>
+    <span>status <b>harness validated</b></span>
+  </div>
+</header>
+
+<section>
+  <h2>Why this is worth building</h2>
+  <p class="lede">The insight is not "fetch a manifest and run it." It is that winget manifests already encode how to drive each installer unattended — and that metadata generalises to Wine almost perfectly.</p>
+
+  <p>Winetricks hand-maintains roughly 200 verbs. Bottles curates a few dozen installers. Both are human-scale, community-based efforts against a machine-scale problem. The winget catalog is the same information, already structured, already maintained by vendors, and already updated hourly.</p>
+
+  <p>The question is what fraction of it Wine can actually drive. Sampling 199 manifests at random and resolving each to its effective installer type:</p>
+
+  <div class="ev">
+    <p class="ev-cap"><span class="tag">measured</span> random sample, n=199, effective type after <code>NestedInstallerType</code> resolution</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Installer type</th><th class="num">Share</th><th>Wine story</th><th>v1</th></tr></thead>
+      <tbody>
+        <tr><td class="bar"><span style="width:29.1%"></span><em>portable</em></td><td class="num">29.1%</td><td class="t">No installer at all — download, verify, extract</td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:27.1%"></span><em>nullsoft</em></td><td class="num">27.1%</td><td class="t"><code>/S</code> — very reliable under Wine</td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:16.6%"></span><em>inno</em></td><td class="num">16.6%</td><td class="t"><code>/VERYSILENT</code> — reliable</td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:13.1%"></span><em>wix</em></td><td class="num">13.1%</td><td class="t"><code>msiexec /i /qn</code></td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:7.0%"></span><em>exe</em></td><td class="num">7.0%</td><td class="t">Switches vary; 85% declare them</td><td><span class="pill p-warn">deferred</span></td></tr>
+        <tr><td class="bar"><span style="width:4.5%"></span><em>msi</em></td><td class="num">4.5%</td><td class="t"><code>msiexec /i /qn</code></td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:1.5%"></span><em>msix</em></td><td class="num">1.5%</td><td class="t">Structurally unsupportable</td><td><span class="pill p-fail">excluded</span></td></tr>
+        <tr><td class="bar"><span style="width:0.5%"></span><em>burn</em></td><td class="num">0.5%</td><td class="t"><code>/quiet /norestart</code></td><td><span class="pill p-pass">supported</span></td></tr>
+        <tr><td class="bar"><span style="width:0.5%"></span><em>appx</em></td><td class="num">0.5%</td><td class="t">Structurally unsupportable</td><td><span class="pill p-fail">excluded</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <p><strong>About 86% of the catalog uses an installer type Wine can drive headlessly</strong>, and only 2% is structurally impossible. Just over half the sampled manifests carry a <code>ProductCode</code>, so uninstall is a registry lookup rather than guesswork.</p>
+
+  <h3>The part that is genuinely hard</h3>
+  <p>Installing is the easy fifth of the problem. <strong>Installing is not running.</strong> Nothing in a winget manifest says whether an app works under Wine, and the dominant failure modes are not installer-shaped — they are missing runtimes, WebView2, and .NET. That gap is why the compatibility harness is not an optional extra; it is the product.</p>
+</section>
+
+<section>
+  <h2>Scope decisions</h2>
+  <p class="lede">Three calls that define v1. Each one trades reach for a failure rate users can trust.</p>
+
+  <dl class="dec">
+    <div>
+      <dt>Productivity, not games</dt>
+      <dd>System Wine only. No Proton, no umu-launcher, no DXVK or VKD3D. This removes the entire GPU-translation surface from the compatibility story and makes harness results reproducible across machines.
+      <span class="cost">effect · one runner to support instead of a matrix</span></dd>
+    </div>
+    <div>
+      <dt>Standalone tool</dt>
+      <dd>Not a Bottles backend or a Lutris source. Viniget owns its prefixes, its index, and its integration path, so the compatibility data has exactly one execution environment to describe.
+      <span class="cost">effect · results stay valid; no host-config drift</span></dd>
+    </div>
+    <div>
+      <dt>Defer bare <code>exe</code></dt>
+      <dd>With no declared switches there is no safe guess, and a wrong one runs an interactive installer to a timeout in a prefix the user must then clean up.
+      <span class="cost">measured cost · blanket skip loses 6.5% of the catalog; skipping only <em>undeclared</em> exe loses 1.0%, at identical risk — 11 of 13 exe-only packages sampled do declare a Silent switch. Gated behind <code>ALLOW_DECLARED_EXE</code>; one line to recover them.</span></dd>
+    </div>
+  </dl>
+</section>
+
+<section>
+  <h2>Architecture</h2>
+  <p class="lede">Six stages. Everything before the prefix is pure metadata and needs no Wine at all.</p>
+
+  <div class="pipe">
+    <div class="stage"><i>01</i><b>Index</b><span>source2.msix → SQLite<br>3.5 MB · hourly</span></div>
+    <div class="stage"><i>02</i><b>Resolve</b><span>source.msix pathparts<br>→ manifest URL</span></div>
+    <div class="stage"><i>03</i><b>Select</b><span>Wine-aware installer<br>choice per arch/scope</span></div>
+    <div class="stage"><i>04</i><b>Prefix</b><span>reflink clone<br>rollback point</span></div>
+    <div class="stage"><i>05</i><b>Install</b><span>silent switches<br>+ delta scoring</span></div>
+    <div class="stage"><i>06</i><b>Integrate</b><span>.lnk → .desktop<br>icon + associations</span></div>
+  </div>
+
+  <h3>The index is public and unauthenticated</h3>
+  <p>Microsoft publishes the catalog as an MSIX — really a zip — containing a SQLite database, refreshed roughly hourly. Two variants matter, and v1 needs both:</p>
+  <ul>
+    <li><code>source2.msix</code> — 3.5 MB, v2 schema, 14,586 packages. Fast search.</li>
+    <li><code>source.msix</code> — 19.5 MB, v1 schema, adds the <code>pathparts</code> tree. The only source of explicit manifest paths.</li>
+  </ul>
+  <p>Two sharp edges, both found the hard way. <span class="tag">measured</span> The CDN does <em>not</em> serve manifests — every path shape returns <code>BlobNotFound</code>; they come from <code>raw.githubusercontent.com</code>. And v1 pathparts end in a four-hex shard segment that does not exist in the GitHub tree:</p>
+
+  <div class="ev">
+    <div class="scroll"><pre><span class="c"># from the v1 index</span>
+manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
+                                               <span class="c">└── strip this</span>
+
+<span class="c"># resolves to</span>
+<b>https://raw.githubusercontent.com/microsoft/winget-pkgs/master/</b>
+  manifests/m/Microsoft/VisualStudioCode/1.134.0/Microsoft.VisualStudioCode.installer.yaml</pre></div>
+  </div>
+
+  <h3>Prefixes are copy-on-write</h3>
+  <p>A baseline prefix costs 444 MB to create once. Every install then reflinks from it, which on btrfs or XFS is effectively free and instant. <span class="tag">measured</span> Cloning that 444 MB prefix took <strong>0.003s and consumed zero new extents</strong>, against 0.158s for a real copy.</p>
+  <p>That buys three things for about forty lines of code: a genuine rollback point before every install, speculative installs that can be discarded, and per-app isolation at shared-prefix cost. On ext4 the same call degrades to a real copy — slower, still correct.</p>
+
+  <h3>Installer selection is Wine-aware</h3>
+  <p>Viniget deliberately does <em>not</em> prefer archive variants, even though extracting is more reliable than executing an installer. The installer is what registers Start Menu shortcuts, file associations, and icons — the metadata that desktop integration and launch-target discovery both depend on. Extraction is the fallback when no supported installer exists, not the happy path.</p>
+</section>
+
+<section>
+  <h2>Three rules the harness exists to enforce</h2>
+  <p class="lede">Each of these was a wrong assumption in the first prototype. They are the difference between a compatibility database that is useful and one that is actively misleading.</p>
+
+  <div class="rules">
+    <div class="rule">
+      <h4>Score on the filesystem, not the exit code</h4>
+      <p>WinMerge's Inno installer ran past a 240-second timeout — having already written <strong>337 files and 8 executables</strong> correctly. A harness that trusts the return code records a working application as broken and poisons the database.</p>
+      <p>Install status is derived from the filesystem delta. The return code is a weak hint, and <code>timeout-but-installed</code> is a pass.</p>
+    </div>
+    <div class="rule">
+      <h4>Take the launch target from the Start Menu shortcut</h4>
+      <p>Matching the package name against executables on disk picks <code>WinMerge32BitPluginProxy.exe</code> over <code>WinMergeU.exe</code>. Every one of the six validation packages dropped a <code>.lnk</code> naming its real entry point.</p>
+      <p>So viniget ships an MS-SHLLINK parser. It feeds two consumers at once — what the harness launches, and what goes into the generated <code>.desktop</code> file. Archive packages have no shortcut; their entry point comes from <code>NestedInstallerFiles</code> in the manifest instead.</p>
+    </div>
+    <div class="rule">
+      <h4>Outcomes are three-way, not pass/fail</h4>
+      <p>Greenshot maps zero windows and is entirely healthy — it is a tray application. Binary scoring writes off every background utility in the catalog.</p>
+      <p>A probe resolves to <code>window-mapped</code>, <code>alive-headless</code>, or <code>died</code>. The first two are both usable.</p>
+    </div>
+  </div>
+
+  <h3>Validation run</h3>
+  <p>Six packages spanning every supported installer type, on Wine 11.16, fully headless under Xvfb:</p>
+
+  <div class="ev">
+    <p class="ev-cap"><span class="tag">measured</span> harness output · SHA-256 verified on every payload</p>
+    <div class="scroll"><pre>Notepad++.Notepad++      nullsoft  <span class="ok">ok</span>                     <span class="ok">window-mapped</span>   notepad++.exe
+Greenshot.Greenshot      inno      <span class="ok">ok</span>                     <span class="wn">alive-headless</span>  Greenshot.exe
+voidtools.Everything     wix       <span class="ok">ok</span>                     <span class="ok">window-mapped</span>   Everything.exe
+WinMerge.WinMerge        inno      <span class="wn">timeout-but-installed</span>  <span class="ok">window-mapped</span>   WinMergeU.exe
+SumatraPDF.SumatraPDF    portable  <span class="ok">ok</span>                     <span class="ok">window-mapped</span>   SumatraPDF-3.6.1-64.exe
+IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>            not-attempted
+
+<span class="c">5/6 usable under Wine · median install 8.4s</span></pre></div>
+  </div>
+
+  <p>The default silent-switch table is load-bearing rather than a convenience. <span class="tag">measured</span> Only <strong>29 of 199</strong> sampled manifests declare a <code>Silent</code> switch — the rest assume the client already knows how to drive their installer type. Three of the six installs above succeeded purely on viniget's built-in defaults.</p>
+</section>
+
+<section>
+  <h2>The compatibility database</h2>
+  <p class="lede">Bundled into the index download. One fetch, one version number, no second staleness axis to reason about.</p>
+
+  <p>Compatibility ships as a table inside the same SQLite the client already downloads for search. A user who has an index has a compat database by definition, and <code>viniget search</code> can show a verdict inline without a second network call. The cost is that compat data is only as fresh as the last index build — acceptable, because verdicts change far more slowly than the catalog does.</p>
+
+  <h3>Why "productivity" cannot be a tag filter</h3>
+  <p>The obvious approach fails. <span class="tag">measured</span> The index carries <strong>20,946 distinct tags for 14,586 packages</strong> — author-supplied, uncontrolled, and multilingual. The <code>productivity</code> tag covers 195 packages. The top tags are noise: <code>gecko</code>, <code>quantum</code>, and <code>火狐</code> all sit near 310 because Firefox ships 310 locale packages and Thunderbird 135.</p>
+  <p>So viniget does not define "productivity" taxonomically. <strong>The harness defines it.</strong> "Installs and maps a window under Wine" is a sharper and more honest filter than any category tree, and it is the one users actually care about. Seeding excludes locale forks, MSIX/APPX, and CLI-only packages; measured results do the rest. Collapsing ID families alone takes 14,586 packages down to <strong>12,401</strong>.</p>
+
+  <h3>Sweep economics</h3>
+  <p>At roughly 60 seconds per package including download, install, and probe, a full sweep of 12,401 families is about <strong>13 hours across 16 parallel workers</strong>. A GitHub Actions matrix on a public repository does this for free, sharded fifty ways.</p>
+  <p>Compute is not the constraint — <strong>bandwidth is</strong>. At an average of roughly 20 MB per installer, a full sweep pulls about 250 GB from vendor servers. So viniget never does full sweeps: packages are retested on manifest-version change only, prioritised by popularity, and nothing is mirrored or cached. Storage is a non-issue, since each test reflinks the baseline prefix and deletes it afterwards.</p>
+</section>
+
+<section>
+  <h2>Build order</h2>
+  <p class="lede">Deliberately sequenced so the harness only starts once install is reliable enough that failures are signal rather than noise.</p>
+
+  <div class="pipe">
+    <div class="stage"><i>first</i><b>Index client</b><span>search · show<br>no Wine involved</span></div>
+    <div class="stage"><i>then</i><b>Install</b><span>nullsoft · inno · msi<br>~74% of catalog</span></div>
+    <div class="stage"><i>then</i><b>Integrate</b><span>.lnk → .desktop<br>icons · associations</span></div>
+    <div class="stage"><i>last</i><b>Harness in CI</b><span>compat db<br>bundled with index</span></div>
+  </div>
+
+  <p>Steps one through three are a working tool on their own. The index client is pure metadata and can ship before a single line of Wine code exists. Step four only pays off once the failure rate is low enough that a <code>died</code> verdict means the application is broken rather than that viniget drove the installer wrong.</p>
+
+  <h3>Implementation</h3>
+  <p>Go for the client: a single static binary, and SQLite, YAML, and HTTP are the entire workload. The harness stays in Python — it is CI-side, iterates constantly, and gains nothing from compilation. A Wails GUI later reuses the Go core.</p>
+</section>
+
+<section>
+  <h2>Open questions</h2>
+  <ul>
+    <li><strong>Runtime provisioning.</strong> WebView2 and .NET are the dominant real-world failure modes and neither is solved by installer automation. Does viniget map <code>WindowsFeatures</code> and <code>PackageDependencies</code> onto winetricks verbs, or report the gap and stop?</li>
+    <li><strong>Opt-in outcome reporting.</strong> Real installs on real machines are far better signal than a CI container. Worth the privacy surface, or does CI-only data suffice?</li>
+    <li><strong>WineHQ AppDB cross-reference.</strong> Existing ratings would seed the database for the popular tail, but matching winget IDs to AppDB entries is fuzzy.</li>
+    <li><strong>Recovering declared <code>exe</code>.</strong> The measured cost of the blanket skip is 6.5% versus 1.0%. Revisit once v1 failure rates are known.</li>
+  </ul>
+</section>
+
+<footer class="foot">
+  <p>Measurements taken 24 August 2026 against winget source index <code>2026.824.920.50</code> on Wine 11.16, CachyOS, btrfs with zstd compression. Figures tagged <span class="tag">measured</span> come from harness runs or index queries; everything else is design judgment and should be argued with.</p>
+</footer>
+
+</div>
