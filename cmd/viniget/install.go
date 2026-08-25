@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/viniget/viniget/internal/cli"
+	"github.com/viniget/viniget/internal/desktop"
 	"github.com/viniget/viniget/internal/index"
 	"github.com/viniget/viniget/internal/install"
 	"github.com/viniget/viniget/internal/manifest"
@@ -55,6 +56,8 @@ func cmdInstall(args []string) int {
 	keepFailed := fs.Bool("keep-failed", false, "keep the prefix from a failed install for inspection")
 	visible := fs.Bool("visible", false, "run the installer on your own display instead of a private Xvfb")
 	verbose := fs.Bool("verbose", false, "show wine's own output")
+	noDesktop := fs.Bool("no-desktop", false, "do not generate a menu entry, icon or file associations")
+	noAssoc := fs.Bool("no-associations", false, "do not offer the package as a handler for its file types")
 	asJSON := fs.Bool("json", false, "emit JSON")
 	dataDir := fs.String("data", "", "data directory for prefixes and installed-package state")
 	cache := fs.String("cache", "", "index cache directory")
@@ -113,8 +116,18 @@ func cmdInstall(args []string) int {
 
 	res, runErr := install.Run(ctx, pkg, opt)
 
+	// Desktop integration is the last stage of an install, not a separate
+	// step, because it is where the launch target comes from: until the Start
+	// Menu shortcut has been read, viniget knows the prefix it wrote to and --
+	// for archive packages only -- what the manifest declared.
+	var integration *desktop.Result
 	if res != nil && res.Status.Installed() {
-		db.Put(install.RecordOf(res))
+		integration = integrate(res, pkg, prefixes.Dir, *noDesktop, *noAssoc)
+		rec := install.RecordOf(res)
+		if integration != nil {
+			rec.Entry, rec.Desktop = res.Entry, integration.Files
+		}
+		db.Put(rec)
 		if err := db.Save(); err != nil {
 			// The application is installed either way; losing the record only
 			// means viniget will not list it, so this is a warning.
@@ -126,7 +139,11 @@ func cmdInstall(args []string) int {
 		if res == nil {
 			return errf("%v", runErr)
 		}
-		if err := cli.JSON(os.Stdout, res); err != nil {
+		out := struct {
+			*install.Result
+			Desktop *desktop.Result `json:"desktop,omitempty"`
+		}{res, integration}
+		if err := cli.JSON(os.Stdout, out); err != nil {
 			return errf("%v", err)
 		}
 		return exitFor(res, runErr)
@@ -142,10 +159,16 @@ func cmdInstall(args []string) int {
 	if err := cli.InstallResult(os.Stdout, res); err != nil {
 		return errf("%v", err)
 	}
+	if integration != nil {
+		if err := cli.DesktopResult(os.Stdout, integration); err != nil {
+			return errf("%v", err)
+		}
+	}
 	if res.Status.Installed() {
-		fmt.Printf("\nrun it with:  WINEPREFIX=%s wine <exe>\n", res.Prefix)
 		if res.Entry != "" {
-			fmt.Printf("              WINEPREFIX=%s wine %q\n", res.Prefix, res.Entry)
+			fmt.Printf("\nrun it with:  viniget run %s\n", res.ID)
+		} else {
+			fmt.Printf("\nrun it with:  WINEPREFIX=%s wine <exe>\n", res.Prefix)
 		}
 	}
 	return exitFor(res, runErr)
@@ -192,4 +215,47 @@ func cmdList(args []string) int {
 		return errf("%v", err)
 	}
 	return 0
+}
+
+// integrate runs desktop integration for a freshly installed package and
+// updates the result's entry point with what it found.
+//
+// A failure here is reported and then dropped: the application is installed,
+// and a menu entry that could not be written is a smaller problem than an
+// install that reports itself as failed when the files are all on disk.
+func integrate(res *install.Result, pkg *manifest.Package, dataDir string, skip, noAssoc bool) *desktop.Result {
+	d := desktop.Package{
+		ID:         res.ID,
+		Name:       res.Name,
+		Version:    res.Version,
+		Prefix:     res.Prefix,
+		Entry:      res.Entry,
+		Extensions: res.FileExtensions,
+	}
+	if pkg != nil && pkg.Locale != nil {
+		d.Comment = pkg.Locale.ShortDescription
+		d.Tags = pkg.Locale.Tags
+	}
+
+	// Even with integration turned off the prefix is still read for its
+	// shortcuts, because the entry point is worth having on its own.
+	if skip {
+		if apps := desktop.Apps(d); len(apps) > 0 {
+			res.Entry = apps[0].Target
+		}
+		return nil
+	}
+
+	out, err := desktop.Integrate(d, desktop.Options{
+		Dirs:           desktop.UserDirs(dataDir),
+		NoAssociations: noAssoc,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "viniget: warning: desktop integration: %v\n", err)
+		return out
+	}
+	if entry := out.Entry(); entry != "" {
+		res.Entry = entry
+	}
+	return out
 }

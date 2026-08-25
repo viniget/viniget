@@ -26,6 +26,9 @@ type Choice struct {
 	URL         string                `json:"url"`
 	Sha256      string                `json:"sha256,omitempty"`
 	Arch        string                `json:"architecture,omitempty"`
+	// FileExtensions are the file types this variant claims, which desktop
+	// integration turns into associations.
+	FileExtensions []string `json:"file_extensions,omitempty"`
 }
 
 // Select makes the Wine-aware installer choice for a package.
@@ -96,7 +99,8 @@ func Select(m *manifest.InstallerManifest) (*Choice, error) {
 			// attaches NestedInstallerFiles to zip entries, but SumatraPDF
 			// declares them on a "portable" that ships a zip anyway, and they
 			// are the only statement of that package's entry point.
-			Nested: entry.NestedInstallerFiles,
+			Nested:         entry.NestedInstallerFiles,
+			FileExtensions: m.EffectiveFileExtensions(entry),
 		}
 		if outer := outerType(m, entry); outer == "zip" {
 			c.Container = "zip"

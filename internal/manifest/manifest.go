@@ -51,6 +51,7 @@ type Installer struct {
 	InstallerSha256      string       `yaml:"InstallerSha256" json:"installer_sha256,omitempty"`
 	ProductCode          string       `yaml:"ProductCode" json:"product_code,omitempty"`
 	InstallerSwitches    *Switches    `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
+	FileExtensions       []string     `yaml:"FileExtensions" json:"file_extensions,omitempty"`
 	ElevationRequirement string       `yaml:"ElevationRequirement" json:"elevation_requirement,omitempty"`
 	ReleaseDate          string       `yaml:"ReleaseDate" json:"release_date,omitempty"`
 }
@@ -121,6 +122,15 @@ func (m *InstallerManifest) EffectiveSwitches(i Installer) *Switches {
 		return i.InstallerSwitches
 	}
 	return m.InstallerSwitches
+}
+
+// EffectiveFileExtensions resolves the file types an entry claims, falling
+// back to the top-level list. These become the desktop file associations.
+func (m *InstallerManifest) EffectiveFileExtensions(i Installer) []string {
+	if len(i.FileExtensions) > 0 {
+		return i.FileExtensions
+	}
+	return m.FileExtensions
 }
 
 // Documentation is one labelled documentation link.

@@ -24,7 +24,9 @@ Usage:
   viniget search <term>   Search the package index
   viniget show <id>       Show a package's manifest
   viniget install <id>    Install a package into its own wine prefix
+  viniget run <id>        Launch an installed package
   viniget list            List installed packages
+  viniget desktop <id>    Regenerate menu entries, icons and associations
   viniget update          Refresh the package index
 
 Run "viniget <command> -h" for command flags.
@@ -45,6 +47,10 @@ func run() int {
 		return cmdShow(args)
 	case "install":
 		return cmdInstall(args)
+	case "run":
+		return cmdRun(args)
+	case "desktop":
+		return cmdDesktop(args)
 	case "list", "ls":
 		return cmdList(args)
 	case "update":

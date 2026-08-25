@@ -5,8 +5,9 @@ a Start Menu shortcut naming its real entry point. Name-matching heuristics do
 not -- they picked `WinMerge32BitPluginProxy.exe` over `WinMergeU.exe` and
 reported a working app as broken.
 
-The same parse feeds two consumers: the harness (what do I launch to probe
-this?) and desktop integration (what goes in the .desktop file?).
+This is the harness's copy, and answers one question: what do I launch to
+probe this package? The shipping client carries its own implementation in Go
+(internal/desktop/lnk.go), which the generated .desktop files come from.
 
 Reference: [MS-SHLLINK] https://learn.microsoft.com/openspecs/windows_protocols/ms-shllink/
 """

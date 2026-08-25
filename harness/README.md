@@ -48,7 +48,7 @@ pass/fail writes off every background utility in the catalog.
 | file | role |
 |---|---|
 | `switches.py` | default silent switches per InstallerType; the `exe` policy |
-| `lnk.py` | MS-SHLLINK parser — launch targets and desktop integration |
+| `lnk.py` | MS-SHLLINK parser — launch targets (the client has its own in Go) |
 | `index.py` | winget source index client (search + manifest path resolution) |
 | `harness.py` | install, probe, verdict |
 | `run.py` | CLI |

@@ -30,6 +30,11 @@ type Record struct {
 	NewExecutables int       `json:"new_executables,omitempty"`
 	WineVersion    string    `json:"wine_version,omitempty"`
 	InstalledAt    time.Time `json:"installed_at"`
+	// Desktop is every file desktop integration wrote for this package.
+	// Recorded rather than rederived so removal is exact: globbing
+	// "viniget-Mozilla.Firefox*" out of the applications directory would take
+	// Mozilla.Firefox.ESR with it.
+	Desktop []string `json:"desktop,omitempty"`
 }
 
 // RecordOf converts a successful install into its durable record.

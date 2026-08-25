@@ -69,6 +69,7 @@ type Result struct {
 	NewFiles       int       `json:"new_files"`
 	NewExecutables int       `json:"new_executables"`
 	Entry          string    `json:"entry,omitempty"`
+	FileExtensions []string  `json:"file_extensions,omitempty"`
 	WineVersion    string    `json:"wine_version,omitempty"`
 	InstalledAt    time.Time `json:"installed_at,omitempty"`
 	Notes          []string  `json:"notes,omitempty"`
@@ -141,6 +142,7 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 	res.Scope = choice.Scope
 	res.Architecture = choice.Arch
 	res.ProductCode = choice.ProductCode
+	res.FileExtensions = choice.FileExtensions
 
 	if err := wine.Available(); err != nil {
 		return res, err
