@@ -209,3 +209,37 @@ func TestLauncherDLLOverrides(t *testing.T) {
 		t.Errorf("a launcher with no package override still disables the menu builder:\n%s", got)
 	}
 }
+
+func TestLauncherEnvironmentQuirk(t *testing.T) {
+	dir := t.TempDir()
+	l := &Launcher{
+		ID:         "VNGCorp.Zalo",
+		Prefix:     dir,
+		Target:     filepath.Join(dir, "Zalo.exe"),
+		WorkingDir: dir,
+	}
+	script := string(l.Script())
+
+	for _, want := range []string{
+		"unset MANGOHUD ELECTRON_RUN_AS_NODE ELECTRON_NO_ATTACH_CONSOLE\n",
+		"WINENTSYNC=${WINENTSYNC-'0'}\nexport WINENTSYNC\n",
+		"WINEESYNC=${WINEESYNC-'0'}\nexport WINEESYNC\n",
+		"WINEFSYNC=${WINEFSYNC-'0'}\nexport WINEFSYNC\n",
+		"if [ -x '/opt/wine-cachyos/bin/wine' ]; then\n",
+		"\tPATH='/opt/wine-cachyos/bin':$PATH\n",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Zalo launcher missing %q:\n%s", want, script)
+		}
+	}
+
+	if _, err := exec.LookPath("sh"); err == nil {
+		path, err := l.Write(dir, "zalo-launcher")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
+			t.Errorf("sh -n rejected the Zalo launcher: %v: %s", err, out)
+		}
+	}
+}
