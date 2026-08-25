@@ -6,8 +6,12 @@ a SQLite database, refreshed roughly hourly:
     source2.msix   3.5 MB   v2 schema, 14,586 packages, fast search
     source.msix     20 MB   v1 schema, adds the `pathparts` tree
 
-Only the v1 index carries explicit manifest paths, so we need both: v2 for
-search, v1 to resolve a package to a manifest URL.
+The v1 index carries explicit manifest paths in its `pathparts` tree. It is not
+actually required: manifest paths are derivable from PackageIdentifier plus
+PackageVersion alone, which was checked against all 164,828 paths in the tree
+and matched every one. The Go client derives them and keeps PathIndex only as a
+fallback; this module still resolves through v1 because the harness already
+pays for the download.
 
 One sharp edge: v1 pathparts end in a 4-hex-character shard segment
 (`.../1.134.0/b90d`) that does not exist in the GitHub tree. It must be
@@ -69,7 +73,11 @@ class Catalog:
     def families(self) -> dict[str, int]:
         """Collapse locale/version forks: Mozilla.Firefox ships 310 packages.
 
-        14,586 raw packages become 12,401 families.
+        14,586 raw packages become 12,401 groups. Note this key is deliberately
+        coarse and over-merges: it also collapses the 60 Microsoft.DotNet.*
+        packages, 33 Azul.Zulu.* and 26 EclipseAdoptium.Temurin.* into one group
+        each. That is tolerable for capping a sweep, but wrong for search --
+        internal/index/family.go folds locales only, for 14,155 families.
         """
         fam: dict[str, int] = {}
         for (pid,) in self.db.execute("select id from packages"):

@@ -237,7 +237,7 @@ li::marker{color:var(--wine-line)}
   <p class="deck">Winget has <strong>14,586 packages</strong> carrying machine-readable silent-install metadata. Nobody has plumbed that into Wine. Viniget does — for productivity software, on system Wine, with a compatibility database built by actually installing everything.</p>
   <div class="meta">
     <span>target <b>Linux + Wine 11.16</b></span>
-    <span>catalog <b>12,401 families</b></span>
+    <span>catalog <b>14,155 families</b></span>
     <span>scope <b>no games · no Proton</b></span>
     <span>status <b>harness validated</b></span>
   </div>
@@ -304,7 +304,7 @@ li::marker{color:var(--wine-line)}
 
   <div class="pipe">
     <div class="stage"><i>01</i><b>Index</b><span>source2.msix → SQLite<br>3.5 MB · hourly</span></div>
-    <div class="stage"><i>02</i><b>Resolve</b><span>source.msix pathparts<br>→ manifest URL</span></div>
+    <div class="stage"><i>02</i><b>Resolve</b><span>id + version<br>→ manifest URL</span></div>
     <div class="stage"><i>03</i><b>Select</b><span>Wine-aware installer<br>choice per arch/scope</span></div>
     <div class="stage"><i>04</i><b>Prefix</b><span>reflink clone<br>rollback point</span></div>
     <div class="stage"><i>05</i><b>Install</b><span>silent switches<br>+ delta scoring</span></div>
@@ -312,22 +312,28 @@ li::marker{color:var(--wine-line)}
   </div>
 
   <h3>The index is public and unauthenticated</h3>
-  <p>Microsoft publishes the catalog as an MSIX — really a zip — containing a SQLite database, refreshed roughly hourly. Two variants matter, and v1 needs both:</p>
+  <p>Microsoft publishes the catalog as an MSIX — really a zip — containing a SQLite database, refreshed roughly hourly. Two variants exist, and v1 ships against just one of them:</p>
   <ul>
-    <li><code>source2.msix</code> — 3.5 MB, v2 schema, 14,586 packages. Fast search.</li>
-    <li><code>source.msix</code> — 19.5 MB, v1 schema, adds the <code>pathparts</code> tree. The only source of explicit manifest paths.</li>
+    <li><code>source2.msix</code> — 3.5 MB, v2 schema, 14,586 packages. Fast search. <strong>This is the entire download.</strong></li>
+    <li><code>source.msix</code> — 19.5 MB, v1 schema, adds the <code>pathparts</code> tree of explicit manifest paths. Wired up as a fallback and never actually fetched.</li>
   </ul>
-  <p>Two sharp edges, both found the hard way. <span class="tag">measured</span> The CDN does <em>not</em> serve manifests — every path shape returns <code>BlobNotFound</code>; they come from <code>raw.githubusercontent.com</code>. And v1 pathparts end in a four-hex shard segment that does not exist in the GitHub tree:</p>
+  <p>The first sharp edge was found the hard way. <span class="tag">measured</span> The CDN does <em>not</em> serve manifests — every path shape returns <code>BlobNotFound</code>; they come from <code>raw.githubusercontent.com</code>.</p>
+
+  <p>The second turned out to be a saving. The v1 tree exists to answer "where is this package's manifest", but the answer is a pure function of the identifier and version, so the tree is redundant. <span class="tag">measured</span> Derivation was checked against <strong>every one of the 164,828 manifest paths</strong> in the v1 index, across all versions, not just the latest: <strong>164,828 matched, 0 diverged</strong>. That deletes a 19.5 MB download and a 40 MB database from the normal path.</p>
 
   <div class="ev">
-    <div class="scroll"><pre><span class="c"># from the v1 index</span>
-manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
-                                               <span class="c">└── strip this</span>
+    <p class="ev-cap"><span class="tag">measured</span> path derivation · 164,828 / 164,828 exact</p>
+    <div class="scroll"><pre><span class="c"># lowercase first letter, identifier split on ".", then the version</span>
+<b>Microsoft.VisualStudioCode</b> @ <b>1.134.0</b>
+  → manifests/<span class="ok">m</span>/<span class="ok">Microsoft</span>/<span class="ok">VisualStudioCode</span>/<span class="ok">1.134.0</span>/Microsoft.VisualStudioCode.installer.yaml
 
-<span class="c"># resolves to</span>
-<b>https://raw.githubusercontent.com/microsoft/winget-pkgs/master/</b>
-  manifests/m/Microsoft/VisualStudioCode/1.134.0/Microsoft.VisualStudioCode.installer.yaml</pre></div>
+<span class="c"># the v1 index says the same thing, plus a shard segment</span>
+<span class="c"># that does not exist in the GitHub tree</span>
+manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
+                                               <span class="c">└── strip this</span></pre></div>
   </div>
+
+  <p>The rule is a convention of the winget-pkgs repository rather than a documented contract, so a 404 falls back to downloading v1 and resolving through <code>pathparts</code>. That path has never run.</p>
 
   <h3>Prefixes are copy-on-write</h3>
   <p>A baseline prefix costs 444 MB to create once. Every install then reflinks from it, which on btrfs or XFS is effectively free and instant. <span class="tag">measured</span> Cloning that 444 MB prefix took <strong>0.003s and consumed zero new extents</strong>, against 0.158s for a real copy.</p>
@@ -385,11 +391,12 @@ IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>          
 
   <h3>Why "productivity" cannot be a tag filter</h3>
   <p>The obvious approach fails. <span class="tag">measured</span> The index carries <strong>20,946 distinct tags for 14,586 packages</strong> — author-supplied, uncontrolled, and multilingual. The <code>productivity</code> tag covers 195 packages. The top tags are noise: <code>gecko</code>, <code>quantum</code>, and <code>火狐</code> all sit near 310 because Firefox ships 310 locale packages and Thunderbird 135.</p>
-  <p>So viniget does not define "productivity" taxonomically. <strong>The harness defines it.</strong> "Installs and maps a window under Wine" is a sharper and more honest filter than any category tree, and it is the one users actually care about. Seeding excludes locale forks, MSIX/APPX, and CLI-only packages; measured results do the rest. Collapsing ID families alone takes 14,586 packages down to <strong>12,401</strong>.</p>
+  <p>So viniget does not define "productivity" taxonomically. <strong>The harness defines it.</strong> "Installs and maps a window under Wine" is a sharper and more honest filter than any category tree, and it is the one users actually care about. Seeding excludes locale forks, MSIX/APPX, and CLI-only packages; measured results do the rest. Collapsing locale forks alone takes 14,586 packages down to <strong>14,155</strong>.</p>
+  <p>The fold has to be narrow to be worth anything. <span class="tag">measured</span> The obvious key — the first two dot-segments of the identifier — merges <strong>699 groups of genuinely distinct products</strong>, collapsing all 60 <code>Microsoft.DotNet.*</code> packages into one entry, along with 33 <code>Azul.Zulu.*</code> and 26 <code>EclipseAdoptium.Temurin.*</code> variants. So viniget folds <code>X.Y</code> into <code>X</code> only when <code>X</code> is itself a package, <code>Y</code> is a known language subtag, <em>and</em> the display name is tagged with that subtag — "Mozilla Firefox (af)". That fires on exactly 5 families, all Mozilla, folding 431 packages with no false positives.</p>
 
   <h3>Sweep economics</h3>
-  <p>At roughly 60 seconds per package including download, install, and probe, a full sweep of 12,401 families is about <strong>13 hours across 16 parallel workers</strong>. A GitHub Actions matrix on a public repository does this for free, sharded fifty ways.</p>
-  <p>Compute is not the constraint — <strong>bandwidth is</strong>. At an average of roughly 20 MB per installer, a full sweep pulls about 250 GB from vendor servers. So viniget never does full sweeps: packages are retested on manifest-version change only, prioritised by popularity, and nothing is mirrored or cached. Storage is a non-issue, since each test reflinks the baseline prefix and deletes it afterwards.</p>
+  <p>At roughly 60 seconds per package including download, install, and probe, a full sweep of 14,155 families is about <strong>15 hours across 16 parallel workers</strong>. A GitHub Actions matrix on a public repository does this for free, sharded fifty ways.</p>
+  <p>Compute is not the constraint — <strong>bandwidth is</strong>. At an average of roughly 20 MB per installer, a full sweep pulls about 280 GB from vendor servers. So viniget never does full sweeps: packages are retested on manifest-version change only, prioritised by popularity, and nothing is mirrored or cached. Storage is a non-issue, since each test reflinks the baseline prefix and deletes it afterwards.</p>
 </section>
 
 <section>
@@ -397,16 +404,16 @@ IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>          
   <p class="lede">Deliberately sequenced so the harness only starts once install is reliable enough that failures are signal rather than noise.</p>
 
   <div class="pipe">
-    <div class="stage"><i>first</i><b>Index client</b><span>search · show<br>no Wine involved</span></div>
+    <div class="stage"><i>done</i><b>Index client</b><span>search · show · update<br>no Wine involved</span></div>
     <div class="stage"><i>then</i><b>Install</b><span>nullsoft · inno · msi<br>~74% of catalog</span></div>
     <div class="stage"><i>then</i><b>Integrate</b><span>.lnk → .desktop<br>icons · associations</span></div>
     <div class="stage"><i>last</i><b>Harness in CI</b><span>compat db<br>bundled with index</span></div>
   </div>
 
-  <p>Steps one through three are a working tool on their own. The index client is pure metadata and can ship before a single line of Wine code exists. Step four only pays off once the failure rate is low enough that a <code>died</code> verdict means the application is broken rather than that viniget drove the installer wrong.</p>
+  <p>Steps one through three are a working tool on their own. The index client is pure metadata and shipped before a single line of Wine code existed. Step four only pays off once the failure rate is low enough that a <code>died</code> verdict means the application is broken rather than that viniget drove the installer wrong.</p>
 
   <h3>Implementation</h3>
-  <p>Go for the client: a single static binary, and SQLite, YAML, and HTTP are the entire workload. The harness stays in Python — it is CI-side, iterates constantly, and gains nothing from compilation. A Wails GUI later reuses the Go core.</p>
+  <p>Go for the client: a single static binary, and SQLite, YAML, and HTTP are the entire workload. Both dependencies are pure Go — <code>modernc.org/sqlite</code> and <code>gopkg.in/yaml.v3</code> — so nothing pulls in cgo. The harness stays in Python: it is CI-side, iterates constantly, and gains nothing from compilation. A Wails GUI later reuses the Go core.</p>
 </section>
 
 <section>
@@ -420,7 +427,7 @@ IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>          
 </section>
 
 <footer class="foot">
-  <p>Measurements taken 24 August 2026 against winget source index <code>2026.824.920.50</code> on Wine 11.16, CachyOS, btrfs with zstd compression. Figures tagged <span class="tag">measured</span> come from harness runs or index queries; everything else is design judgment and should be argued with.</p>
+  <p>Harness measurements taken 24 August 2026 against winget source index <code>2026.824.920.50</code> on Wine 11.16, CachyOS, btrfs with zstd compression. Index and path-derivation figures were re-measured against <code>2026.824.1343.13</code>. Figures tagged <span class="tag">measured</span> come from harness runs or index queries; everything else is design judgment and should be argued with.</p>
 </footer>
 
 </div>

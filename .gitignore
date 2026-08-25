@@ -1,0 +1,11 @@
+# Build output
+/viniget
+/dist/
+
+# Test binaries and coverage
+*.test
+*.out
+
+# Extracted index databases and the msix they come from
+*.db
+*.msix
