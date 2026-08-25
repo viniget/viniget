@@ -30,6 +30,9 @@ Usage:
   viniget desktop <id>    Regenerate menu entries, icons and associations
   viniget update          Refresh the package index
 
+An <id> is a full package identifier. Install also accepts an exact moniker --
+the short name in search's MONIKER column -- when it names one package.
+
 Run "viniget <command> -h" for command flags.
 `
 

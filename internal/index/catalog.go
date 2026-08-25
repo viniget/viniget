@@ -112,6 +112,140 @@ func (c *Catalog) Get(id string) (*Package, error) {
 	return &p, nil
 }
 
+// AmbiguousError reports a moniker shared by several packages that are not
+// variants of one another, so no single one of them can be meant.
+type AmbiguousError struct {
+	Moniker    string
+	Candidates []Package
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("%q is the moniker of %d packages", e.Moniker, len(e.Candidates))
+}
+
+// Lookup resolves a package by exact identifier, or by exact moniker when no
+// identifier matches. It returns nil for both when neither does.
+//
+// Identifiers are tried first because an identifier names exactly one package
+// by construction, so it is never the ambiguous reading of a name.
+//
+// Monikers do not: 108 of the ones in the live index are shared. Most of that
+// sharing is locale forks and the release channels, architecture variants and
+// repackagings that hang off a base package, which collapse to one answer --
+// "firefox" is Mozilla.Firefox, not Mozilla.Firefox.MSIX. What is left over is
+// genuinely ambiguous and reported as such: "postgresql" names PostgreSQL 17,
+// 18 and four PostgresPro builds, and picking for the user would be a guess.
+func (c *Catalog) Lookup(name string) (*Package, error) {
+	p, err := c.Get(name)
+	if p != nil || err != nil {
+		return p, err
+	}
+
+	matches, err := c.byMoniker(name)
+	if err != nil || len(matches) == 0 {
+		return nil, err
+	}
+	if len(matches) == 1 {
+		return &matches[0], nil
+	}
+
+	fams, err := c.fold(matches)
+	if err != nil {
+		return nil, err
+	}
+	if len(fams) == 1 {
+		return &fams[0], nil
+	}
+	if base := pickBase(fams); base != nil {
+		return base, nil
+	}
+	return nil, &AmbiguousError{Moniker: name, Candidates: fams}
+}
+
+// byMoniker returns every package carrying the given moniker, case-insensitively.
+func (c *Catalog) byMoniker(moniker string) ([]Package, error) {
+	if moniker == "" {
+		return nil, nil
+	}
+	rows, err := c.db.Query(
+		"select id, name, coalesce(moniker,''), latest_version from packages "+
+			"where moniker = ? collate nocase", moniker)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Package
+	for rows.Next() {
+		var p Package
+		if err := rows.Scan(&p.ID, &p.Name, &p.Moniker, &p.Version); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sortPackages(out)
+	return out, nil
+}
+
+// fold collapses locale forks onto their base package, the same way search
+// does, so that the 102 packages sharing the moniker "firefox" are weighed as
+// the two products they actually are.
+func (c *Catalog) fold(pkgs []Package) ([]Package, error) {
+	if err := c.load(); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := make([]Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		fam, ok := c.byID[c.folder.Fold(p.ID)]
+		if !ok || seen[fam.ID] {
+			continue
+		}
+		seen[fam.ID] = true
+		out = append(out, fam)
+	}
+	sortPackages(out)
+	return out, nil
+}
+
+// pickBase returns the candidate that every other candidate extends -- the
+// package a set of channels, architectures or repackagings hangs off.
+// Mozilla.Firefox.MSIX extends Mozilla.Firefox, so "firefox" means Firefox.
+// DeliveryStation.ds and Docker.ds extend nothing in common, so "ds" is left
+// to mean neither.
+func pickBase(pkgs []Package) *Package {
+	for i := range pkgs {
+		prefix := strings.ToLower(pkgs[i].ID) + "."
+		base := true
+		for _, other := range pkgs {
+			if other.ID == pkgs[i].ID {
+				continue
+			}
+			if !strings.HasPrefix(strings.ToLower(other.ID), prefix) {
+				base = false
+				break
+			}
+		}
+		if base {
+			return &pkgs[i]
+		}
+	}
+	return nil
+}
+
+// sortPackages orders by identifier length then value, which puts a base
+// package ahead of the variants that extend it.
+func sortPackages(pkgs []Package) {
+	sort.Slice(pkgs, func(i, j int) bool {
+		if len(pkgs[i].ID) != len(pkgs[j].ID) {
+			return len(pkgs[i].ID) < len(pkgs[j].ID)
+		}
+		return pkgs[i].ID < pkgs[j].ID
+	})
+}
+
 // likeEscape neutralises LIKE wildcards in user input.
 func likeEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)

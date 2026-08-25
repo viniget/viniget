@@ -67,6 +67,14 @@ func seedCatalog(t *testing.T) *Catalog {
 			tags: []string{"search"}},
 		{id: "Notepad++.Notepad++", name: "Notepad++", moniker: "notepad++", version: "8.9.8",
 			tags: []string{"editor"}, commands: []string{"notepad++"}},
+
+		// Two unrelated products answering to one moniker, as they do in the
+		// live index. The third row is constructed: no live package's moniker
+		// spells another package's identifier, but the lookup order has to
+		// hold if one ever does.
+		{id: "Loom.Loom", name: "Loom", moniker: "loom", version: "0.230.0"},
+		{id: "Teradata.Loom", name: "Teradata Loom", moniker: "loom", version: "2.6"},
+		{id: "Loom.Loom.Portable", name: "Loom (portable)", moniker: "Loom.Loom", version: "0.230.0"},
 	}
 
 	tagID := map[string]int64{}
@@ -266,11 +274,11 @@ func TestFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if packages != 16 {
-		t.Errorf("packages = %d, want 16", packages)
+	if packages != 19 {
+		t.Errorf("packages = %d, want 19", packages)
 	}
 	// Three Firefox locale forks fold away: .af, .zh-CN, and .ESR.af.
-	if families != 13 {
-		t.Errorf("families = %d, want 13", families)
+	if families != 16 {
+		t.Errorf("families = %d, want 16", families)
 	}
 }

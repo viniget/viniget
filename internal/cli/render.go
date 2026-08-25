@@ -41,6 +41,16 @@ func SearchResults(w io.Writer, results []index.Result) error {
 	return t.Flush()
 }
 
+// Packages renders a bare list of packages: the shape a candidate list takes
+// when the user has to pick one identifier out of it.
+func Packages(w io.Writer, pkgs []index.Package) error {
+	t := newTable(w)
+	for _, p := range pkgs {
+		fmt.Fprintf(t, "  %s\t%s\t%s\n", p.ID, truncate(p.Name, 44), p.Version)
+	}
+	return t.Flush()
+}
+
 // Package renders one resolved package version in detail.
 func Package(w io.Writer, p *manifest.Package) error {
 	loc := p.Locale

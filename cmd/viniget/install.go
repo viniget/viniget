@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/viniget/viniget/internal/cli"
 	"github.com/viniget/viniget/internal/desktop"
@@ -17,21 +18,27 @@ import (
 	"github.com/viniget/viniget/internal/wine"
 )
 
-// resolve turns a package identifier into a fully fetched manifest. Version
-// may be empty, in which case the index's latest is used.
-func resolve(ctx context.Context, cache string, noRefresh bool, id, version string) (*manifest.Package, error) {
+// resolve turns a package identifier or moniker into a fully fetched
+// manifest. Version may be empty, in which case the index's latest is used.
+func resolve(ctx context.Context, cache string, noRefresh bool, name, version string) (*manifest.Package, error) {
 	cat, store, err := openCatalog(ctx, cache, noRefresh)
 	if err != nil {
 		return nil, err
 	}
 	defer cat.Close()
 
-	pkg, err := cat.Get(id)
+	pkg, err := cat.Lookup(name)
 	if err != nil {
+		var ambiguous *index.AmbiguousError
+		if errors.As(err, &ambiguous) {
+			// Passed through unwrapped: the caller prints the candidates, and
+			// a list of identifiers is the whole of the useful answer here.
+			return nil, err
+		}
 		return nil, fmt.Errorf("lookup: %w", err)
 	}
 	if pkg == nil {
-		return nil, fmt.Errorf("no package with id %q (try: viniget search %s)", id, id)
+		return nil, fmt.Errorf("no package with id or moniker %q (try: viniget search %s)", name, name)
 	}
 	if version == "" {
 		version = pkg.Version
@@ -74,10 +81,10 @@ func cmdInstall(args []string) int {
 	}
 
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: viniget install <package-id>")
+		fmt.Fprintln(os.Stderr, "usage: viniget install <package-id|moniker>")
 		return 2
 	}
-	id := rest[0]
+	name := rest[0]
 
 	if err := wine.Available(); err != nil {
 		return errf("%v", err)
@@ -90,9 +97,18 @@ func cmdInstall(args []string) int {
 		return errf("%v", err)
 	}
 
-	pkg, err := resolve(ctx, *cache, *noRefresh, id, *version)
+	pkg, err := resolve(ctx, *cache, *noRefresh, name, *version)
 	if err != nil {
+		var ambiguous *index.AmbiguousError
+		if errors.As(err, &ambiguous) {
+			return ambiguousf(ambiguous)
+		}
 		return errf("%v", err)
+	}
+	// A moniker is a nickname several packages may answer to, so the
+	// identifier it landed on is worth stating before anything is downloaded.
+	if !strings.EqualFold(name, pkg.ID) {
+		fmt.Fprintf(os.Stderr, "%s is %s\n", name, pkg.ID)
 	}
 
 	if prev, ok := db.Get(pkg.ID); ok && !*force {
@@ -189,6 +205,14 @@ func cmdInstall(args []string) int {
 func isTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// ambiguousf reports a moniker that several unrelated packages answer to.
+// The identifiers are the answer: one of them is what the user has to type.
+func ambiguousf(e *index.AmbiguousError) int {
+	fmt.Fprintf(os.Stderr, "viniget: %v; install one by id:\n", e)
+	cli.Packages(os.Stderr, e.Candidates)
+	return 1
 }
 
 func exitFor(res *install.Result, err error) int {

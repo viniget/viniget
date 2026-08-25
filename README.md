@@ -30,7 +30,8 @@ Mozilla.Firefox.ESR   Mozilla Firefox ESR (en-US)  153.0.0  firefox-esr  +101 lo
 So is the installer. `viniget install` picks the variant Wine can drive,
 verifies the download against the manifest's SHA-256, reflinks the baseline
 prefix, runs the installer unattended under a private Xvfb, and scores what
-landed on disk.
+landed on disk. It takes a package identifier or the moniker in search's
+`MONIKER` column — `viniget install firefox` is `Mozilla.Firefox`.
 
 So is desktop integration. The install ends by reading the Start Menu shortcut
 the installer wrote, which is where the launch target comes from — and turning
@@ -174,6 +175,7 @@ with `-no-associations`.
 - Uninstalling is three deletions in a fixed order, because the prefix *is* the package. The menu entry goes first, so a removal interrupted halfway leaves an application that cannot be launched rather than a menu entry pointing into a prefix that is being deleted. The record goes last, and only once the prefix has actually gone — a record dropped over a surviving prefix is an orphan nothing lists, which is the state the command exists to get people out of. Running the vendor's own uninstaller would be strictly worse than skipping it: it is the least tested path in any Windows installer, it fails differently under Wine than on Windows, and everything it missed is inside the directory being deleted a moment later.
 - Sizes are reported as apparent, never as space freed. `du` charges every reflinked clone the baseline's full 437 MB, so eight packages holding about a gigabyte between them would report 4.8 GB "freed" — and what the filesystem really gives back depends on which extents the baseline still holds after the delete. Apparent size is an upper bound that does not change depending on what else happens to be installed, which is the only honest number available without asking the filesystem about extent ownership.
 - A manifest's declared installer type is a hint, not a promise. SumatraPDF declares `portable` and ships a zip; the payload's magic number is believed over the manifest.
+- A moniker is a nickname, not a name: 108 of them in the index are shared, so `install` only accepts one when it points somewhere. Locale forks collapse first — 102 packages answer to `firefox` — and then the release channels, architecture variants and repackagings that hang off a base package collapse onto it, because `Mozilla.Firefox.MSIX` extends `Mozilla.Firefox` and `Hashicorp.Terraform.{Alpha,Beta,RC}` extend `Hashicorp.Terraform`. That resolves 39 of the 108 and picks the stable channel every time. The other 69 are listed for the user to choose from rather than guessed at: `postgresql` is the moniker of PostgreSQL 17, 18 and four Postgres Pro builds, and `mc` means Midnight Commander or the MinIO client depending on who is asking. Identifiers are matched first, so a moniker can never shadow a package's real name.
 
 ## Layout
 
