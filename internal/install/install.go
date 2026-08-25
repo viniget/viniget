@@ -193,7 +193,13 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		return res, err
 	}
 
-	runner := &wine.Runner{Prefix: staging, Display: opt.Display, Verbose: opt.Verbose}
+	quirk := installQuirkFor(pkg.ID)
+	runner := &wine.Runner{
+		Prefix:       staging,
+		Display:      opt.Display,
+		Verbose:      opt.Verbose,
+		DLLOverrides: quirk.DLLOverrides,
+	}
 	if runner.Display.Kind == "" {
 		runner.Display = wine.Headless()
 	}

@@ -55,3 +55,15 @@ func TestEnvKeepsAnInheritedOverride(t *testing.T) {
 		t.Errorf("WINEDLLOVERRIDES = %q, want the inherited value first", got)
 	}
 }
+
+// A command-specific override is composed after inherited settings so the
+// measured quirk wins, and before the menu-builder guard so both remain set.
+func TestEnvIncludesACommandSpecificOverride(t *testing.T) {
+	t.Setenv("WINEDLLOVERRIDES", "powershell.exe=b")
+	r := &Runner{Prefix: "/tmp/pfx", DLLOverrides: "powershell.exe=d"}
+	got, _ := envValue(r.Env(), "WINEDLLOVERRIDES")
+	want := "powershell.exe=b;powershell.exe=d;" + NoMenuBuilder
+	if got != want {
+		t.Errorf("WINEDLLOVERRIDES = %q, want %q", got, want)
+	}
+}

@@ -87,6 +87,10 @@ type Runner struct {
 	NoRuntimePrompts bool
 	// Output receives merged stdout/stderr. Nil discards it.
 	Output io.Writer
+	// DLLOverrides are additional overrides needed only for this invocation.
+	// Package-specific install quirks use this without leaking their settings
+	// into the generated launcher or another command in the same prefix.
+	DLLOverrides string
 }
 
 // NoMenuBuilder disables wine's own menu builder.
@@ -122,12 +126,15 @@ func (r *Runner) Env() []string {
 // later entry wins, which is what keeps somebody else's WINEDLLOVERRIDES from
 // turning the menu builder back on.
 func (r *Runner) overrides() string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if inherited := os.Getenv("WINEDLLOVERRIDES"); inherited != "" {
 		parts = append(parts, inherited)
 	}
 	if r.NoRuntimePrompts {
 		parts = append(parts, "mscoree,mshtml=")
+	}
+	if r.DLLOverrides != "" {
+		parts = append(parts, r.DLLOverrides)
 	}
 	return strings.Join(append(parts, NoMenuBuilder), ";")
 }
