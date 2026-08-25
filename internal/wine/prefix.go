@@ -78,6 +78,7 @@ func (s *Store) EnsureBase(ctx context.Context, verbose bool) error {
 		// A baseline created before viniget started disabling the menu
 		// builder still has it on, and so does every prefix cloned from it.
 		disableMenuBuilder(ctx, s.Base(), verbose)
+		ContainDesktop(s.Base())
 		return nil
 	}
 	// A half-written prefix from an interrupted boot is worse than none.
@@ -86,6 +87,10 @@ func (s *Store) EnsureBase(ctx context.Context, verbose bool) error {
 	}
 	r := &Runner{Prefix: s.Base(), Display: Headless(), Verbose: verbose}
 	if err := r.Boot(ctx); err != nil {
+		os.RemoveAll(s.Base())
+		return err
+	}
+	if _, err := ContainDesktop(s.Base()); err != nil {
 		os.RemoveAll(s.Base())
 		return err
 	}
@@ -141,7 +146,51 @@ func (s *Store) Clone(dest string) error {
 	if err != nil {
 		return fmt.Errorf("clone prefix: %v: %s", err, strings.TrimSpace(string(out)))
 	}
+	// Done on the clone rather than trusted from the baseline: a baseline
+	// made by an older viniget still carries the symlink, and cp -a preserves
+	// it faithfully.
+	if _, err := ContainDesktop(dest); err != nil {
+		return err
+	}
 	return normalizeDrives(dest)
+}
+
+// ContainDesktop replaces a prefix's Desktop folders with real directories,
+// and returns the ones it had to change.
+//
+// wineboot points drive_c/users/<user>/Desktop at $HOME/Desktop, and that one
+// symlink breaks desktop integration from both ends. An installer that offers
+// to "create a desktop shortcut" writes its .lnk onto the real desktop, where
+// it is a Windows shortcut file no file manager on Linux can launch -- and
+// viniget never sees it, because the walk that collects shortcuts does not
+// descend through a symlinked root, so a package whose only shortcut is that
+// one produces no menu entry at all. Reading through the link instead would
+// be worse: every prefix shares that directory, so each install would be
+// scanning every other package's shortcuts.
+//
+// Only Desktop is contained. Documents, Downloads, Pictures and the rest stay
+// linked to the user's own: an application that cannot reach the files it was
+// installed to open is a regression, and none of them feed the menu.
+//
+// The registry keeps naming C:\users\<user>\Desktop either way, so the
+// installer still writes exactly where it meant to -- inside the prefix now.
+func ContainDesktop(prefix string) ([]string, error) {
+	matches, _ := filepath.Glob(filepath.Join(prefix, "drive_c", "users", "*", "Desktop"))
+	var contained []string
+	for _, dir := range matches {
+		info, err := os.Lstat(dir)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if err := os.Remove(dir); err != nil {
+			return contained, fmt.Errorf("unlink %s: %w", dir, err)
+		}
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			return contained, fmt.Errorf("replace %s: %w", dir, err)
+		}
+		contained = append(contained, dir)
+	}
+	return contained, nil
 }
 
 // Removal is what deleting one package's prefixes took off disk.

@@ -316,3 +316,62 @@ func TestNamesMatch(t *testing.T) {
 		}
 	}
 }
+
+// A symlinked Desktop is invisible, which is the whole reason viniget
+// replaces it with a real directory before an installer ever runs -- see
+// wine.ContainDesktop. The walk stops at a symlinked root rather than
+// descending it, so a package whose only shortcut is on the desktop looks
+// like a package with no shortcuts at all.
+//
+// Following the link would be worse than not seeing it: every prefix links to
+// the same directory, so each install would be reading every other package's
+// shortcuts out of the user's own desktop.
+func TestFindShortcutsAndTheSymlinkedDesktop(t *testing.T) {
+	prefix := t.TempDir()
+	appDir := filepath.Join(prefix, "drive_c", "Program Files", "Demo")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "Demo.exe"), []byte("MZ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The user's own desktop, holding the shortcut the installer wrote
+	// through the link.
+	home := t.TempDir()
+	writeLNK(t, filepath.Join(home, "Demo.lnk"), &lnkBuilder{
+		flags: flagHasLinkInfo, target: `C:\Program Files\Demo\Demo.exe`,
+	})
+	user := filepath.Join(prefix, "drive_c", "users", "catch")
+	if err := os.MkdirAll(user, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(home, filepath.Join(user, "Desktop")); err != nil {
+		t.Fatal(err)
+	}
+
+	if found := FindShortcuts(prefix, "Demo"); len(found) != 0 {
+		t.Fatalf("found %d shortcuts through the symlink, want none", len(found))
+	}
+
+	// Contained -- a real directory in the prefix -- the same shortcut is
+	// found, and the package has a menu entry instead of nothing.
+	if err := os.Remove(filepath.Join(user, "Desktop")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(user, "Desktop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLNK(t, filepath.Join(user, "Desktop", "Demo.lnk"), &lnkBuilder{
+		flags: flagHasLinkInfo, target: `C:\Program Files\Demo\Demo.exe`,
+	})
+
+	found := FindShortcuts(prefix, "Demo")
+	if len(found) != 1 {
+		t.Fatalf("found %d shortcuts in the contained desktop, want 1", len(found))
+	}
+	if !found[0].Desktop || found[0].Label() != "Demo" {
+		t.Errorf("shortcut = %q (desktop=%v), want the Desktop \"Demo\"",
+			found[0].Label(), found[0].Desktop)
+	}
+}

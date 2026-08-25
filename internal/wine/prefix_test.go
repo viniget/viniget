@@ -155,3 +155,92 @@ func TestStorePaths(t *testing.T) {
 		t.Errorf("For = %q, %v", got, err)
 	}
 }
+
+// The Desktop is the one shell folder wineboot links into the user's own home
+// that viniget cannot live with: an installer writes its shortcut through the
+// link onto the real desktop, where it is a .lnk no Linux file manager can
+// launch, and the walk that collects shortcuts will not descend a symlinked
+// root, so viniget never sees it either.
+func TestContainDesktopReplacesTheLink(t *testing.T) {
+	prefix := t.TempDir()
+	home := t.TempDir()
+	user := filepath.Join(prefix, "drive_c", "users", "catch")
+	if err := os.MkdirAll(user, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(home, filepath.Join(user, "Desktop")); err != nil {
+		t.Fatal(err)
+	}
+
+	contained, err := ContainDesktop(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contained) != 1 {
+		t.Fatalf("contained %v, want the one Desktop", contained)
+	}
+	info, err := os.Lstat(filepath.Join(user, "Desktop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Errorf("Desktop is %s, want a real directory", info.Mode())
+	}
+	// A shortcut written through the old link would have landed here.
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Errorf("the user's own desktop was touched: %v %v", entries, err)
+	}
+}
+
+// The other shell folders stay linked. An application that cannot open the
+// files it was installed for is a worse outcome than a tidy prefix, and none
+// of them feed the menu.
+func TestContainDesktopLeavesTheOtherFoldersLinked(t *testing.T) {
+	prefix := t.TempDir()
+	home := t.TempDir()
+	user := filepath.Join(prefix, "drive_c", "users", "catch")
+	if err := os.MkdirAll(user, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Desktop", "Documents", "Downloads"} {
+		if err := os.Symlink(home, filepath.Join(user, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ContainDesktop(prefix); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Documents", "Downloads"} {
+		info, err := os.Lstat(filepath.Join(user, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s was contained; only Desktop should be", name)
+		}
+	}
+}
+
+// A prefix already containing its own Desktop -- every prefix cloned from a
+// contained baseline -- is left exactly as it is, contents and all.
+func TestContainDesktopKeepsARealDirectory(t *testing.T) {
+	prefix := t.TempDir()
+	desktop := filepath.Join(prefix, "drive_c", "users", "catch", "Desktop")
+	if err := os.MkdirAll(desktop, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shortcut := filepath.Join(desktop, "App.lnk")
+	if err := os.WriteFile(shortcut, []byte("L\x00\x00\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contained, err := ContainDesktop(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contained) != 0 {
+		t.Errorf("contained %v, want nothing to do", contained)
+	}
+	if _, err := os.Stat(shortcut); err != nil {
+		t.Errorf("the shortcut in it was destroyed: %v", err)
+	}
+}

@@ -143,6 +143,17 @@ func generateDesktop(db *install.DB, dirs desktop.Dirs, records []install.Record
 			asked = rec.DLLOverrides
 		}
 
+		// Repairing before reading, because what is being read is the
+		// prefix. A prefix from before viniget contained the Desktop still
+		// has it pointing at the user's own, which is where its installer
+		// dropped a .lnk nothing on Linux can launch -- and where viniget
+		// cannot see it. Containing it here is what stops the next shortcut
+		// the application writes from going the same way.
+		contained, err := wine.ContainDesktop(rec.Prefix)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "viniget: %s: %v\n", rec.ID, err)
+		}
+
 		// Refreshed once at the end rather than once per package: the
 		// updaters walk whole directories, and on -all that is the slow part.
 		res, err := desktop.Integrate(desktopPackage(rec, pkg, asked), desktop.Options{
@@ -154,6 +165,10 @@ func generateDesktop(db *install.DB, dirs desktop.Dirs, records []install.Record
 			fmt.Fprintf(os.Stderr, "viniget: %s: %v\n", rec.ID, err)
 			failed = true
 			continue
+		}
+		if len(contained) > 0 {
+			res.Notes = append(res.Notes,
+				"the prefix's Desktop pointed at your own; it is now the prefix's own directory")
 		}
 		if pkg == nil && len(res.Apps) > 0 {
 			res.Notes = append(res.Notes,
