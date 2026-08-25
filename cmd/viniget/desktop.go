@@ -21,13 +21,14 @@ import (
 // manifest supplies the description, the menu categories and the file types,
 // all of which degrade to "absent" rather than to an error -- which is what
 // makes regenerating an entry work offline.
-func desktopPackage(rec install.Record, pkg *manifest.Package) desktop.Package {
+func desktopPackage(rec install.Record, pkg *manifest.Package, overrides *string) desktop.Package {
 	d := desktop.Package{
-		ID:      rec.ID,
-		Name:    rec.Name,
-		Version: rec.Version,
-		Prefix:  rec.Prefix,
-		Entry:   rec.Entry,
+		ID:           rec.ID,
+		Name:         rec.Name,
+		Version:      rec.Version,
+		Prefix:       rec.Prefix,
+		Entry:        rec.Entry,
+		DLLOverrides: resolveOverrides(overrides, rec.ID),
 	}
 	if pkg == nil {
 		return d
@@ -49,6 +50,16 @@ func desktopPackage(rec install.Record, pkg *manifest.Package) desktop.Package {
 	return d
 }
 
+// resolveOverrides decides what WINEDLLOVERRIDES a launcher carries: what was
+// asked for when something was asked for -- including "none", which is why
+// this takes a pointer -- and viniget's own entry for the package otherwise.
+func resolveOverrides(asked *string, id string) string {
+	if asked != nil {
+		return *asked
+	}
+	return desktop.DLLOverridesFor(id)
+}
+
 func cmdDesktop(args []string) int {
 	fs := flag.NewFlagSet("desktop", flag.ExitOnError)
 	all := fs.Bool("all", false, "act on every installed package")
@@ -58,7 +69,16 @@ func cmdDesktop(args []string) int {
 	dataDir := fs.String("data", "", "data directory for prefixes and installed-package state")
 	cache := fs.String("cache", "", "index cache directory")
 	noRefresh := fs.Bool("no-refresh", false, "never refresh the index")
+	dllOverrides := fs.String("dll-overrides", "",
+		"WINEDLLOVERRIDES for the generated launcher; pass it empty to drop the one viniget applies by default")
 	rest := parseArgs(fs, args)
+
+	// Distinguished from "left alone" so that clearing an override sticks
+	// rather than being reapplied from the quirk table on the next run.
+	var overrides *string
+	if flagGiven(fs, "dll-overrides") {
+		overrides = dllOverrides
+	}
 
 	prefixes := wine.NewStore(*dataDir)
 	db, err := install.OpenDB(install.StatePath(prefixes.Dir))
@@ -91,11 +111,11 @@ func cmdDesktop(args []string) int {
 	if *remove {
 		return removeDesktop(db, dirs, records, *asJSON)
 	}
-	return generateDesktop(db, dirs, records, *cache, *noRefresh, *noAssoc, *asJSON)
+	return generateDesktop(db, dirs, records, *cache, *noRefresh, *noAssoc, *asJSON, overrides)
 }
 
 func generateDesktop(db *install.DB, dirs desktop.Dirs, records []install.Record,
-	cache string, noRefresh, noAssoc, asJSON bool) int {
+	cache string, noRefresh, noAssoc, asJSON bool, overrides *string) int {
 
 	ctx := context.Background()
 	results := map[string]*desktop.Result{}
@@ -116,9 +136,16 @@ func generateDesktop(db *install.DB, dirs desktop.Dirs, records []install.Record
 			pkg = nil
 		}
 
+		// The flag decides when it was given, the record when it was not, and
+		// viniget's own table when neither has an opinion.
+		asked := overrides
+		if asked == nil {
+			asked = rec.DLLOverrides
+		}
+
 		// Refreshed once at the end rather than once per package: the
 		// updaters walk whole directories, and on -all that is the slow part.
-		res, err := desktop.Integrate(desktopPackage(rec, pkg), desktop.Options{
+		res, err := desktop.Integrate(desktopPackage(rec, pkg, asked), desktop.Options{
 			Dirs:           dirs,
 			NoAssociations: noAssoc,
 			NoRefresh:      true,
@@ -136,6 +163,7 @@ func generateDesktop(db *install.DB, dirs desktop.Dirs, records []install.Record
 		wroteMIME = wroteMIME || res.MIMEFile != ""
 
 		rec.Desktop = res.Files
+		rec.DLLOverrides = asked
 		if entry := res.Entry(); entry != "" {
 			rec.Entry = entry
 		}
@@ -280,11 +308,12 @@ func writeLauncher(rec install.Record, dirs desktop.Dirs, slug string) (string, 
 		return "", fmt.Errorf("nothing launchable found in %s", rec.Prefix)
 	}
 	l := &desktop.Launcher{
-		ID:         rec.ID,
-		Prefix:     rec.Prefix,
-		Target:     app.Target,
-		Args:       app.Args,
-		WorkingDir: app.WorkingDir,
+		ID:           rec.ID,
+		Prefix:       rec.Prefix,
+		Target:       app.Target,
+		Args:         app.Args,
+		WorkingDir:   app.WorkingDir,
+		DLLOverrides: resolveOverrides(rec.DLLOverrides, rec.ID),
 	}
 	return l.Write(dirs.Launchers, desktop.LauncherName(rec.ID, slug))
 }

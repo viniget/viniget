@@ -11,13 +11,16 @@ import (
 
 // A generated launcher script sits between the .desktop entry and wine.
 //
-// It exists for three reasons, none of which a bare `Exec=env WINEPREFIX=...
+// It exists for four reasons, none of which a bare `Exec=env WINEPREFIX=...
 // wine app.exe %f` line can cover. A Windows application handed
 // /home/you/report.pdf cannot open it -- the argument has to be converted to
 // the prefix's own drive letters first. Several applications only work when
-// launched from their install directory. And the whole command is then one
-// argument in the Exec line rather than eight, which keeps the two layers of
-// quoting the Exec key requires down to something a person can read.
+// launched from their install directory. A few will not start at all without
+// a WINEDLLOVERRIDES, which then has to be present on every launch rather
+// than remembered by whoever first reported the bug. And the whole command is
+// then one argument in the Exec line rather than eight, which keeps the two
+// layers of quoting the Exec key requires down to something a person can
+// read.
 //
 // The script is derived state: it is regenerated from the prefix whenever it
 // is missing, and editing it by hand is pointless.
@@ -36,6 +39,9 @@ type Launcher struct {
 	// WorkingDir is the host directory to launch from. Empty means the
 	// executable's own directory.
 	WorkingDir string
+	// DLLOverrides is a WINEDLLOVERRIDES string for an application that needs
+	// one to start. Empty -- which is nearly always -- means wine's defaults.
+	DLLOverrides string
 }
 
 // dosTarget renders the executable as the prefix sees it.
@@ -73,7 +79,16 @@ func (l *Launcher) Script() []byte {
 	// session journal where nobody reads it, but somebody debugging a launch
 	// needs it back without editing the file.
 	fmt.Fprintf(&b, "WINEDEBUG=${WINEDEBUG--all}\n")
-	fmt.Fprintf(&b, "export WINEDEBUG\n\n")
+	fmt.Fprintf(&b, "export WINEDEBUG\n")
+	if l.DLLOverrides != "" {
+		// Overridable for the same reason, and more so: this one is viniget's
+		// opinion about a wine bug rather than a fact about the application,
+		// and whoever checks whether the bug is still there needs to drop it
+		// for one run without editing a generated file.
+		fmt.Fprintf(&b, "WINEDLLOVERRIDES=${WINEDLLOVERRIDES-%s}\n", shellQuote(l.DLLOverrides))
+		fmt.Fprintf(&b, "export WINEDLLOVERRIDES\n")
+	}
+	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "cd %s 2>/dev/null || :\n\n", shellQuote(l.workingDir()))
 
 	fmt.Fprintf(&b, "# Rotate the argument list, converting the host paths in it as they go by.\n")

@@ -80,6 +80,19 @@ func parseArgs(fs *flag.FlagSet, args []string) []string {
 	}
 }
 
+// flagGiven reports whether a flag was actually typed, as opposed to left at
+// its zero value. The difference matters wherever the zero value is itself a
+// choice somebody might mean.
+func flagGiven(fs *flag.FlagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
+}
+
 func errf(format string, a ...any) int {
 	fmt.Fprintf(os.Stderr, "viniget: "+format+"\n", a...)
 	return 1

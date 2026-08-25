@@ -30,6 +30,7 @@ func DesktopResult(w io.Writer, r *desktop.Result) error {
 		row(t, "Icon", iconSummary(app))
 		row(t, "Launcher", tildify(app.Launcher))
 		row(t, "Found via", sourceLabel(app.Source))
+		row(t, "DLL overrides", app.DLLOverrides)
 		row(t, "File types", mimeSummary(r.MIMETypes))
 		if err := t.Flush(); err != nil {
 			return err

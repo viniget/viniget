@@ -247,6 +247,14 @@ func TestWriteIconsSkipsNonThemeSizes(t *testing.T) {
 // those indirections is a place to be off by a header.
 func buildPE(t *testing.T, iconData []byte, groupID, iconID uint16) []byte {
 	t.Helper()
+	return buildPEGroup(t, iconData, groupID, "", iconID)
+}
+
+// buildPEGroup is buildPE with control over how the RT_GROUP_ICON entry is
+// named. A non-empty name makes it a string-named entry -- IDI_ICON1 from
+// windres, MAINICON from Delphi -- rather than a numbered one.
+func buildPEGroup(t *testing.T, iconData []byte, groupID uint16, name string, iconID uint16) []byte {
+	t.Helper()
 	const (
 		peOff      = 0x40
 		optSize    = 112 + 16*8 // PE32+ with the full data directory
@@ -268,9 +276,15 @@ func buildPE(t *testing.T, iconData []byte, groupID, iconID uint16) []byte {
 		imageData = 0x100
 	)
 
-	// Sized to fit the image, which is the whole reason the directory offsets
-	// above are fixed and the data comes last.
-	rsrc := make([]byte, imageData+len(iconData))
+	// Sized to fit the image and, when there is one, the group's name string,
+	// which is the whole reason the directory offsets above are fixed and the
+	// data comes last.
+	nameStr := imageData + len(iconData)
+	total := nameStr
+	if name != "" {
+		total += 2 + 2*len([]rune(name))
+	}
+	rsrc := make([]byte, total)
 	dir := func(off int, entries [][2]uint32) {
 		binary.LittleEndian.PutUint16(rsrc[off+12:], 0)                    // named entries
 		binary.LittleEndian.PutUint16(rsrc[off+14:], uint16(len(entries))) // id entries
@@ -284,6 +298,14 @@ func buildPE(t *testing.T, iconData []byte, groupID, iconID uint16) []byte {
 		binary.LittleEndian.PutUint32(rsrc[off:], uint32(sectionVA+dataOff))
 		binary.LittleEndian.PutUint32(rsrc[off+4:], uint32(size))
 	}
+	// dirNamed writes a directory whose one entry carries a string name rather
+	// than an id, which is what NumberOfNamedEntries counts.
+	dirNamed := func(off, nameOff int, sub uint32) {
+		binary.LittleEndian.PutUint16(rsrc[off+12:], 1) // named entries
+		binary.LittleEndian.PutUint16(rsrc[off+14:], 0) // id entries
+		binary.LittleEndian.PutUint32(rsrc[off+16:], 0x80000000|uint32(nameOff))
+		binary.LittleEndian.PutUint32(rsrc[off+20:], sub)
+	}
 
 	// Types must be sorted by id: RT_ICON (3) before RT_GROUP_ICON (14).
 	dir(rootDir, [][2]uint32{
@@ -294,7 +316,15 @@ func buildPE(t *testing.T, iconData []byte, groupID, iconID uint16) []byte {
 	dir(iconName, [][2]uint32{{1033, iconLeaf}}) // language: en-US
 	leaf(iconLeaf, imageData, len(iconData))
 
-	dir(groupType, [][2]uint32{{uint32(groupID), 0x80000000 | groupName}})
+	if name == "" {
+		dir(groupType, [][2]uint32{{uint32(groupID), 0x80000000 | groupName}})
+	} else {
+		dirNamed(groupType, nameStr, 0x80000000|groupName)
+		binary.LittleEndian.PutUint16(rsrc[nameStr:], uint16(len([]rune(name))))
+		for i, r := range []rune(name) {
+			binary.LittleEndian.PutUint16(rsrc[nameStr+2+i*2:], uint16(r))
+		}
+	}
 	dir(groupName, [][2]uint32{{1033, groupLeaf}})
 	leaf(groupLeaf, groupData, 6+14)
 
@@ -367,6 +397,24 @@ func TestPEIconsByNegativeIndex(t *testing.T) {
 	}
 	if _, err := peIcons(exe, -99); err != nil {
 		t.Errorf("a resource id that does not exist should fall back to the first group, got: %v", err)
+	}
+}
+
+// TestPEIconsNamedGroupIcon covers the executables whose group icon carries a
+// string name instead of an id. Skipping those reported "no icon resources"
+// for an executable shipping eight perfectly good sizes, because a resource
+// directory stores its named entries ahead of its numbered ones and the walk
+// started past them.
+func TestPEIconsNamedGroupIcon(t *testing.T) {
+	for _, name := range []string{"IDI_ICON1", "MAINICON"} {
+		exe := buildPEGroup(t, demoIconDIB(), 0, name, 7)
+		images, err := peIcons(exe, 0)
+		if err != nil {
+			t.Fatalf("peIcons on a group named %s: %v", name, err)
+		}
+		if len(images) != 1 || images[0].Bounds().Dx() != 48 {
+			t.Fatalf("group named %s: got %d images, want one 48px", name, len(images))
+		}
 	}
 }
 

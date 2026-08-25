@@ -30,6 +30,12 @@ type Record struct {
 	NewExecutables int       `json:"new_executables,omitempty"`
 	WineVersion    string    `json:"wine_version,omitempty"`
 	InstalledAt    time.Time `json:"installed_at"`
+	// DLLOverrides is what was asked of the generated launcher's
+	// WINEDLLOVERRIDES. A pointer because "never asked" and "asked for none"
+	// are different answers: the first lets viniget's own entry for the
+	// package apply on the next regeneration, the second is a decision that
+	// has to survive one.
+	DLLOverrides *string `json:"dll_overrides,omitempty"`
 	// Desktop is every file desktop integration wrote for this package.
 	// Recorded rather than rederived so removal is exact: globbing
 	// "viniget-Mozilla.Firefox*" out of the applications directory would take

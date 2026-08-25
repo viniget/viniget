@@ -30,6 +30,9 @@ type Package struct {
 	// Entry is a manifest-declared entry point. Archive packages have no
 	// installer to write a shortcut, so this is all they ever have.
 	Entry string
+	// DLLOverrides is the WINEDLLOVERRIDES the generated launchers carry, for
+	// the few applications that will not start under wine without one.
+	DLLOverrides string
 }
 
 // Options configures one integration.
@@ -72,11 +75,13 @@ type App struct {
 // Written is what integration produced for one app.
 type Written struct {
 	App
-	DesktopFile string   `json:"desktop_file"`
-	Launcher    string   `json:"launcher"`
-	IconName    string   `json:"icon,omitempty"`
-	IconFiles   []string `json:"icon_files,omitempty"`
-	IconSizes   []int    `json:"icon_sizes,omitempty"`
+	DesktopFile string `json:"desktop_file"`
+	Launcher    string `json:"launcher"`
+	// DLLOverrides is the WINEDLLOVERRIDES the launcher was written with.
+	DLLOverrides string   `json:"dll_overrides,omitempty"`
+	IconName     string   `json:"icon,omitempty"`
+	IconFiles    []string `json:"icon_files,omitempty"`
+	IconSizes    []int    `json:"icon_sizes,omitempty"`
 }
 
 // Result is everything one integration produced.
@@ -250,11 +255,12 @@ func Integrate(pkg Package, opt Options) (*Result, error) {
 		}
 
 		launcher := &Launcher{
-			ID:         pkg.ID,
-			Prefix:     pkg.Prefix,
-			Target:     app.Target,
-			Args:       app.Args,
-			WorkingDir: app.WorkingDir,
+			ID:           pkg.ID,
+			Prefix:       pkg.Prefix,
+			Target:       app.Target,
+			Args:         app.Args,
+			WorkingDir:   app.WorkingDir,
+			DLLOverrides: pkg.DLLOverrides,
 		}
 		scriptPath, err := launcher.Write(opt.Dirs.Launchers, LauncherName(pkg.ID, app.Slug))
 		if err != nil {
@@ -262,7 +268,7 @@ func Integrate(pkg Package, opt Options) (*Result, error) {
 		}
 		res.Files = append(res.Files, scriptPath)
 
-		w := Written{App: app, Launcher: scriptPath}
+		w := Written{App: app, Launcher: scriptPath, DLLOverrides: pkg.DLLOverrides}
 		w.IconName, w.IconFiles, w.IconSizes = installIcon(app.Icon, opt.Dirs, stem, res)
 		res.Files = append(res.Files, w.IconFiles...)
 

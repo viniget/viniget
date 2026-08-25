@@ -62,7 +62,16 @@ func cmdInstall(args []string) int {
 	dataDir := fs.String("data", "", "data directory for prefixes and installed-package state")
 	cache := fs.String("cache", "", "index cache directory")
 	noRefresh := fs.Bool("no-refresh", false, "never refresh the index")
+	dllOverrides := fs.String("dll-overrides", "",
+		"WINEDLLOVERRIDES for the generated launcher; pass it empty to drop the one viniget applies by default")
 	rest := parseArgs(fs, args)
+
+	// Distinguished from "left alone" so that clearing an override sticks
+	// rather than being reapplied from the quirk table on the next run.
+	var overrides *string
+	if flagGiven(fs, "dll-overrides") {
+		overrides = dllOverrides
+	}
 
 	if len(rest) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: viniget install <package-id>")
@@ -122,8 +131,9 @@ func cmdInstall(args []string) int {
 	// for archive packages only -- what the manifest declared.
 	var integration *desktop.Result
 	if res != nil && res.Status.Installed() {
-		integration = integrate(res, pkg, prefixes.Dir, *noDesktop, *noAssoc)
+		integration = integrate(res, pkg, prefixes.Dir, *noDesktop, *noAssoc, overrides)
 		rec := install.RecordOf(res)
+		rec.DLLOverrides = overrides
 		if integration != nil {
 			rec.Entry, rec.Desktop = res.Entry, integration.Files
 		}
@@ -223,14 +233,17 @@ func cmdList(args []string) int {
 // A failure here is reported and then dropped: the application is installed,
 // and a menu entry that could not be written is a smaller problem than an
 // install that reports itself as failed when the files are all on disk.
-func integrate(res *install.Result, pkg *manifest.Package, dataDir string, skip, noAssoc bool) *desktop.Result {
+func integrate(res *install.Result, pkg *manifest.Package, dataDir string, skip, noAssoc bool,
+	overrides *string) *desktop.Result {
+
 	d := desktop.Package{
-		ID:         res.ID,
-		Name:       res.Name,
-		Version:    res.Version,
-		Prefix:     res.Prefix,
-		Entry:      res.Entry,
-		Extensions: res.FileExtensions,
+		ID:           res.ID,
+		Name:         res.Name,
+		Version:      res.Version,
+		Prefix:       res.Prefix,
+		Entry:        res.Entry,
+		Extensions:   res.FileExtensions,
+		DLLOverrides: resolveOverrides(overrides, res.ID),
 	}
 	if pkg != nil && pkg.Locale != nil {
 		d.Comment = pkg.Locale.ShortDescription

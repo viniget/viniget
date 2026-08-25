@@ -385,13 +385,14 @@ func peIcons(buf []byte, index int) ([]image.Image, error) {
 	}
 
 	// A negative index names a resource ID outright; a non-negative one counts
-	// from the front of the resource list. Windows sorts by ID, and so does
-	// the resource directory itself, so the order is already right.
+	// from the front of the resource list. The resource directory is already
+	// in that order -- names first, then ids, each sorted -- so nothing needs
+	// sorting here. A named group has no id for the negative form to match.
 	group := groups[0]
 	if index < 0 {
 		id := uint32(-index)
 		for _, g := range groups {
-			if g.id == id {
+			if !g.named && g.id == id {
 				group = g
 				break
 			}
@@ -409,6 +410,11 @@ func peIcons(buf []byte, index int) ([]image.Image, error) {
 	icons := p.entries(0, rtIcon)
 	byID := make(map[uint32]resEntry, len(icons))
 	for _, e := range icons {
+		// A group directory names its images by integer id, so a named
+		// RT_ICON is unreachable from one and must not shadow a real id.
+		if e.named {
+			continue
+		}
 		byID[e.id] = e
 	}
 
@@ -443,6 +449,9 @@ type resEntry struct {
 	id     uint32
 	offset uint32
 	isDir  bool
+	// named marks an entry carrying a string name rather than an integer id,
+	// which leaves id meaningless -- it holds the name's offset instead.
+	named bool
 }
 
 type peFile struct {
@@ -535,8 +544,16 @@ func (p *peFile) offsetOf(rva uint32) (int, bool) {
 	return 0, false
 }
 
-// entries lists a resource directory's entries, keeping only id-named ones
-// (icons are never named) and, when want is non-zero, only that type.
+// entries lists a resource directory's entries and, when want is non-zero,
+// only that resource type.
+//
+// A directory stores its string-named entries first and its numbered ones
+// after. Both are wanted below the type directory: a group icon called
+// MAINICON -- which is what Delphi emits -- or IDI_ICON1, which is what
+// windres defaults to, is as ordinary as a numbered one, and skipping it
+// loses the only icon the executable has. Resource *types* are the one level
+// where a name is impossible, RT_ICON and RT_GROUP_ICON being numbers by
+// definition, so the search for a type starts past the names instead.
 func (p *peFile) entries(dirOffset int, want uint32) []resEntry {
 	base := p.resBase + dirOffset
 	if base+16 > len(p.buf) {
@@ -546,7 +563,11 @@ func (p *peFile) entries(dirOffset int, want uint32) []resEntry {
 	ids := int(binary.LittleEndian.Uint16(p.buf[base+14:]))
 	var out []resEntry
 
-	for i := named; i < named+ids; i++ {
+	first := 0
+	if want != 0 {
+		first = named
+	}
+	for i := first; i < named+ids; i++ {
 		e := base + 16 + i*8
 		if e+8 > len(p.buf) {
 			break
@@ -557,6 +578,7 @@ func (p *peFile) entries(dirOffset int, want uint32) []resEntry {
 			id:     id &^ 0x80000000,
 			offset: off &^ 0x80000000,
 			isDir:  off&0x80000000 != 0,
+			named:  id&0x80000000 != 0,
 		}
 		if want == 0 {
 			out = append(out, entry)

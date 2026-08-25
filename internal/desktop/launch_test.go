@@ -151,3 +151,54 @@ func TestLauncherConvertsArguments(t *testing.T) {
 		t.Errorf("argument order is wrong:\n%s", got)
 	}
 }
+
+// TestLauncherDLLOverrides covers the escape hatch for the few applications
+// that will not start under wine without one. The value has to reach wine on
+// every launch, and the environment has to be able to take it back off for a
+// single run -- checking whether the wine bug behind it is still there is the
+// whole reason somebody would want to.
+func TestLauncherDLLOverrides(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	stub := "#!/bin/sh\necho \"OVERRIDES:[$WINEDLLOVERRIDES]\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "wine"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	l := &Launcher{ID: "Vendor.Demo", Prefix: dir, Target: filepath.Join(dir, "demo.exe"),
+		WorkingDir: dir, DLLOverrides: "sapi=d"}
+	script, err := l.Write(dir, "launcher")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A hermetic environment rather than the ambient one: whether this passes
+	// must not depend on the WINEDLLOVERRIDES of whoever runs the tests.
+	run := func(env ...string) string {
+		cmd := exec.Command(script)
+		cmd.Env = append([]string{"PATH=" + dir + ":" + os.Getenv("PATH")}, env...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return string(out)
+	}
+
+	if got := run(); !strings.Contains(got, "OVERRIDES:[sapi=d]") {
+		t.Errorf("the override did not reach wine:\n%s", got)
+	}
+	if got := run("WINEDLLOVERRIDES=other=n"); !strings.Contains(got, "OVERRIDES:[other=n]") {
+		t.Errorf("the environment did not win over the default:\n%s", got)
+	}
+	if got := run("WINEDLLOVERRIDES="); !strings.Contains(got, "OVERRIDES:[]") {
+		t.Errorf("an empty environment value did not drop the override:\n%s", got)
+	}
+
+	// A launcher for the overwhelming majority mentions it nowhere at all.
+	plain := &Launcher{ID: "Vendor.Demo", Prefix: dir, Target: filepath.Join(dir, "demo.exe")}
+	if strings.Contains(string(plain.Script()), "WINEDLLOVERRIDES") {
+		t.Errorf("a launcher with no override should not set one:\n%s", plain.Script())
+	}
+}
