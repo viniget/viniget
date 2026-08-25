@@ -393,3 +393,48 @@ func hasNote(res *Result, substr string) bool {
 	}
 	return false
 }
+
+func TestSummarizeNamesEachKind(t *testing.T) {
+	dirs := testDirs(t)
+	files := []string{
+		filepath.Join(dirs.Applications, "viniget-Demo.Pkg.desktop"),
+		filepath.Join(dirs.Applications, "viniget-Demo.Pkg-tools.desktop"),
+		filepath.Join(dirs.Icons, "hicolor", "32x32", "apps", "viniget-Demo.Pkg.png"),
+		filepath.Join(dirs.Launchers, "Demo.Pkg"),
+		filepath.Join(dirs.MIME, "packages", "viniget-Demo.Pkg.xml"),
+	}
+	got := Summarize(dirs, files)
+	want := "2 menu entries, 1 icon, 1 launcher, 1 file-type declaration"
+	if got != want {
+		t.Errorf("Summarize = %q, want %q", got, want)
+	}
+	if got := Summarize(dirs, nil); got != "" {
+		t.Errorf("Summarize(nil) = %q, want empty", got)
+	}
+	// Anything outside the four known directories is still counted, rather
+	// than vanishing out of a report of what was deleted.
+	if got := Summarize(dirs, []string{"/somewhere/else/thing"}); got != "1 file" {
+		t.Errorf("Summarize of an unknown path = %q", got)
+	}
+}
+
+// The summary is the line most people read after an uninstall, so it has to
+// describe what Integrate actually wrote rather than a guess at it.
+func TestSummarizeDescribesARealIntegration(t *testing.T) {
+	dirs := testDirs(t)
+	res, err := Integrate(Package{
+		ID: "Demo.Pkg", Name: "Demo", Prefix: fakePrefix(t), Extensions: []string{"dmo"},
+	}, Options{Dirs: dirs, NoRefresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Summarize(dirs, res.Files)
+	for _, want := range []string{"menu entries", "icon", "launcher", "file-type declaration"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Summarize = %q, missing %s", got, want)
+		}
+	}
+	if strings.Contains(got, " file,") || strings.HasSuffix(got, " files") {
+		t.Errorf("Summarize = %q: something Integrate wrote landed outside the known dirs", got)
+	}
+}

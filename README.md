@@ -70,6 +70,27 @@ opening a `.7z` from a file manager offers 7-Zip alongside whatever already
 handles it. `viniget desktop <id>` regenerates all of that for a package
 installed before any of it existed, and `-remove` takes it away again.
 
+So is uninstalling, and one prefix per package is what turns it into three
+deletions rather than a negotiation. Nothing else shares the prefix, so there
+is no vendor uninstaller to run — the record even carries the `ProductCode`
+that `msiexec /x` would want — no registry to unpick and no `%APPDATA%` left
+behind, because all of it is inside the directory being removed.
+
+```
+$ viniget uninstall Notepad++.Notepad++
+uninstalled Notepad++ 8.9.8
+  Prefix   ~/.local/share/viniget/prefixes/Notepad++.Notepad++
+  Size     398.9 MB apparent
+  Desktop  1 menu entry, 6 icons, 1 launcher
+
+  · apparent size; prefixes are reflink clones, so the space reclaimed is at most that
+```
+
+That is 1,970 files in **0.065s**. It sweeps up the abandoned `.installing`
+prefix a failed install left beside the real one, and a package whose record
+never got written — the one state `viniget list` cannot show — comes out the
+same way, off what is on disk. `-all` clears everything, and asks first.
+
 Measured across every supported installer type on Wine 11.16, x86_64, btrfs:
 
 ```
@@ -115,7 +136,9 @@ pacman -S wine xorg-server-xvfb        # or your distribution's equivalents
 State lives in `$XDG_DATA_HOME/viniget` (prefixes, `installed.json` and the
 generated launchers); payloads and the index cache live in
 `$XDG_CACHE_HOME/viniget`. Both are overridable per command with `-data` and
-`-cache`.
+`-cache`. `viniget uninstall` empties the first of
+a package and leaves the second alone: a payload is keyed by its digest and
+may be the same file another package installs from.
 
 Desktop integration writes to the standard per-user locations —
 `$XDG_DATA_HOME/applications`, `.../icons/hicolor` and `.../mime/packages` —
@@ -146,13 +169,15 @@ with `-no-associations`.
 - A few applications need a `WINEDLLOVERRIDES` to start at all, so the generated launcher carries one where viniget knows of it. Icecream Ebook Reader is the measured case: it enumerates the SAPI voice tokens' attributes at startup and loops until told there are no more, and Wine's `ISpDataKey::EnumValues` is a stub returning `E_NOTIMPL` rather than `SPERR_NO_MORE_ITEMS` — so it spins at 100% of a core on its splash screen and never opens a window. `sapi=d` costs the read-aloud feature that same stub was never going to provide. Set your own with `-dll-overrides` on `install` or `desktop`, pass it empty to drop viniget's, or take it off for a single launch with `WINEDLLOVERRIDES= viniget run <id>`.
 - File associations are an offer, never a claim. An extension the shared MIME database already knows keeps the system's type; only genuinely unknown ones get a viniget-declared one. `MimeType=` makes an application *available* for a type — `mimeapps.list`, which decides the default, is never written. Installing a Windows PDF viewer must not silently take `.pdf` from the one already handling it.
 - The `.desktop` entry runs a generated launcher script rather than `wine` directly. It converts host paths in the arguments to the prefix's drive letters — a Windows application handed `/home/you/report.pdf` cannot open it — launches from the shortcut's working directory, and addresses the executable as `C:\...` so the application does not see itself installed on a network drive.
+- Uninstalling is three deletions in a fixed order, because the prefix *is* the package. The menu entry goes first, so a removal interrupted halfway leaves an application that cannot be launched rather than a menu entry pointing into a prefix that is being deleted. The record goes last, and only once the prefix has actually gone — a record dropped over a surviving prefix is an orphan nothing lists, which is the state the command exists to get people out of. Running the vendor's own uninstaller would be strictly worse than skipping it: it is the least tested path in any Windows installer, it fails differently under Wine than on Windows, and everything it missed is inside the directory being deleted a moment later.
+- Sizes are reported as apparent, never as space freed. `du` charges every reflinked clone the baseline's full 437 MB, so eight packages holding about a gigabyte between them would report 4.8 GB "freed" — and what the filesystem really gives back depends on which extents the baseline still holds after the delete. Apparent size is an upper bound that does not change depending on what else happens to be installed, which is the only honest number available without asking the filesystem about extent ownership.
 - A manifest's declared installer type is a hint, not a promise. SumatraPDF declares `portable` and ships a zip; the payload's magic number is believed over the manifest.
 
 ## Layout
 
 | path | role |
 |---|---|
-| `cmd/viniget/` | CLI — `search`, `show`, `install`, `run`, `list`, `desktop`, `update` |
+| `cmd/viniget/` | CLI — `search`, `show`, `install`, `uninstall`, `run`, `list`, `desktop`, `update` |
 | `internal/index/` | index fetch, search, locale fold, path resolution |
 | `internal/manifest/` | manifest types and fetching |
 | `internal/install/` | installer selection, silent switches, download, extraction, delta scoring, installed-package state |

@@ -3,6 +3,7 @@ package wine
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,6 +106,88 @@ func (s *Store) Clone(dest string) error {
 		return fmt.Errorf("clone prefix: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return normalizeDrives(dest)
+}
+
+// Removal is what deleting one package's prefixes took off disk.
+type Removal struct {
+	// Paths are the directories removed: the package's prefix, plus any
+	// staging or backup sibling an interrupted install left beside it.
+	Paths []string `json:"paths,omitempty"`
+	// Bytes is their apparent size -- the sum of the file sizes, which is
+	// deliberately not a claim about space reclaimed. A prefix is a reflink
+	// clone of a baseline that is still there, so how much of this the
+	// filesystem gives back depends on which extents the baseline still holds.
+	Bytes int64 `json:"bytes"`
+}
+
+// Paths returns the prefix directories that exist for a package.
+//
+// More than one can, and the extras are the interesting part: ".installing"
+// is a failed install kept for inspection, ".previous" is a swap that did not
+// finish. Both are this package's state and nothing else ever looks at them,
+// so whatever removes the prefix has to remove them too.
+func (s *Store) Paths(id string) []string {
+	prefix, err := s.For(id)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, path := range []string{prefix, prefix + ".installing", prefix + ".previous"} {
+		if _, err := os.Lstat(path); err == nil {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// Remove deletes a package's prefix and its siblings.
+//
+// The baseline is refused by name. safeID only guarantees an identifier stays
+// inside the prefixes directory, and "base" is inside it: a package that
+// managed to be called that would otherwise take the prefix every other
+// install is cloned from with it, costing the next install a 20-40s wineboot
+// and -- since the clones hold the extents -- freeing almost nothing.
+func (s *Store) Remove(id string) (Removal, error) {
+	prefix, err := s.For(id)
+	if err != nil {
+		return Removal{}, err
+	}
+	if prefix == s.Base() {
+		return Removal{}, fmt.Errorf("%q is viniget's baseline prefix, not an installed package", id)
+	}
+
+	var rm Removal
+	for _, path := range s.Paths(id) {
+		size := apparentSize(path)
+		if err := os.RemoveAll(path); err != nil {
+			return rm, fmt.Errorf("remove prefix %s: %w", path, err)
+		}
+		rm.Paths = append(rm.Paths, path)
+		rm.Bytes += size
+	}
+	return rm, nil
+}
+
+// apparentSize sums the regular file sizes under a path.
+//
+// Apparent rather than blocks allocated, because on a reflinked prefix
+// neither number is the space a delete gives back and only this one is
+// stable: du reports the baseline's 444 MB against every clone of it, so
+// "freed 4.8 GB" would be the reading for eight packages sharing 1 GB.
+// Unreadable entries are skipped rather than failing the walk -- a size is
+// never worth refusing to uninstall over.
+func apparentSize(root string) int64 {
+	var total int64
+	filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // Swap moves a freshly installed staging prefix into its final home, keeping

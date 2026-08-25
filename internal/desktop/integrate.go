@@ -455,3 +455,69 @@ func Refresh(dirs Dirs, mime bool, res *Result) {
 		}
 	}
 }
+
+// Summarize describes a set of integration files by what each one is, which
+// the directory it lives in already decides.
+//
+// "6 files" is a number nobody can check. "1 menu entry, 3 icons, 1 launcher"
+// is the same removal said in terms of what left the desktop, and it makes
+// the case worth noticing -- a launcher deleted while its menu entry survived
+// -- visible in the one line most people will read.
+func Summarize(dirs Dirs, files []string) string {
+	kinds := []struct {
+		dir       string
+		one, many string
+		n         int
+	}{
+		{dirs.Applications, "menu entry", "menu entries", 0},
+		{dirs.Icons, "icon", "icons", 0},
+		{dirs.Launchers, "launcher", "launchers", 0},
+		{dirs.MIME, "file-type declaration", "file-type declarations", 0},
+	}
+	other := 0
+
+	for _, f := range files {
+		matched := false
+		for i := range kinds {
+			if under(kinds[i].dir, f) {
+				kinds[i].n++
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			other++
+		}
+	}
+
+	var parts []string
+	for _, k := range kinds {
+		if k.n > 0 {
+			parts = append(parts, count(k.n, k.one, k.many))
+		}
+	}
+	if other > 0 {
+		parts = append(parts, count(other, "file", "files"))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// under reports whether path sits inside dir. Both are absolute paths viniget
+// composed itself, so this is a containment test rather than a security one.
+func under(dir, path string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
