@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/viniget/viniget/internal/wine"
 )
 
 func TestSplitWindowsArgs(t *testing.T) {
@@ -186,7 +188,7 @@ func TestLauncherDLLOverrides(t *testing.T) {
 		return string(out)
 	}
 
-	if got := run(); !strings.Contains(got, "OVERRIDES:[sapi=d]") {
+	if got := run(); !strings.Contains(got, "sapi=d") {
 		t.Errorf("the override did not reach wine:\n%s", got)
 	}
 	if got := run("WINEDLLOVERRIDES=other=n"); !strings.Contains(got, "OVERRIDES:[other=n]") {
@@ -196,9 +198,14 @@ func TestLauncherDLLOverrides(t *testing.T) {
 		t.Errorf("an empty environment value did not drop the override:\n%s", got)
 	}
 
-	// A launcher for the overwhelming majority mentions it nowhere at all.
+	// The menu builder goes off on every launch, package override or not: an
+	// application that writes its own Start Menu shortcut at first run would
+	// otherwise put a second, wine-generated entry beside viniget's.
+	if got := run(); !strings.Contains(got, wine.NoMenuBuilder) {
+		t.Errorf("the menu builder was not disabled:\n%s", got)
+	}
 	plain := &Launcher{ID: "Vendor.Demo", Prefix: dir, Target: filepath.Join(dir, "demo.exe")}
-	if strings.Contains(string(plain.Script()), "WINEDLLOVERRIDES") {
-		t.Errorf("a launcher with no override should not set one:\n%s", plain.Script())
+	if got := string(plain.Script()); !strings.Contains(got, wine.NoMenuBuilder) {
+		t.Errorf("a launcher with no package override still disables the menu builder:\n%s", got)
 	}
 }

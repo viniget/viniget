@@ -64,6 +64,20 @@ func (l *Launcher) workingDir() string {
 	return filepath.Dir(l.Target)
 }
 
+// overrides is the WINEDLLOVERRIDES the launcher exports.
+//
+// wine's menu builder is disabled on every launch, not just during the
+// install: an application that writes its Start Menu shortcut on first run
+// would otherwise put a second, wine-generated entry in the menu beside the
+// one viniget wrote, pointing at the same prefix through a different path.
+// The package's own override, when it has one, follows it.
+func (l *Launcher) overrides() string {
+	if l.DLLOverrides == "" {
+		return wine.NoMenuBuilder
+	}
+	return wine.NoMenuBuilder + ";" + l.DLLOverrides
+}
+
 // Script renders the launcher as a POSIX shell script.
 func (l *Launcher) Script() []byte {
 	var b strings.Builder
@@ -80,14 +94,13 @@ func (l *Launcher) Script() []byte {
 	// needs it back without editing the file.
 	fmt.Fprintf(&b, "WINEDEBUG=${WINEDEBUG--all}\n")
 	fmt.Fprintf(&b, "export WINEDEBUG\n")
-	if l.DLLOverrides != "" {
-		// Overridable for the same reason, and more so: this one is viniget's
-		// opinion about a wine bug rather than a fact about the application,
-		// and whoever checks whether the bug is still there needs to drop it
-		// for one run without editing a generated file.
-		fmt.Fprintf(&b, "WINEDLLOVERRIDES=${WINEDLLOVERRIDES-%s}\n", shellQuote(l.DLLOverrides))
-		fmt.Fprintf(&b, "export WINEDLLOVERRIDES\n")
-	}
+	// Overridable for the same reason, and more so where the package carries
+	// one of its own: that part is viniget's opinion about a wine bug rather
+	// than a fact about the application, and whoever checks whether the bug is
+	// still there needs to drop it for one run without editing a generated
+	// file.
+	fmt.Fprintf(&b, "WINEDLLOVERRIDES=${WINEDLLOVERRIDES-%s}\n", shellQuote(l.overrides()))
+	fmt.Fprintf(&b, "export WINEDLLOVERRIDES\n")
 	fmt.Fprintf(&b, "\n")
 	fmt.Fprintf(&b, "cd %s 2>/dev/null || :\n\n", shellQuote(l.workingDir()))
 

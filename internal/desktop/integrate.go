@@ -233,6 +233,13 @@ func Integrate(pkg Package, opt Options) (*Result, error) {
 	// is derived from the prefix, so clearing first costs nothing.
 	Remove(opt.Dirs, pkg.ID, nil)
 
+	// And the entries wine's own menu builder wrote for this prefix before
+	// viniget started turning it off, which are duplicates of what follows.
+	if stale := PruneWineMenu(opt.Dirs, pkg.Prefix); len(stale) > 0 {
+		res.note("removed %s wine's menu builder had written for this prefix",
+			count(len(stale), "stale file", "stale files"))
+	}
+
 	apps := Apps(pkg)
 	if len(apps) == 0 {
 		res.note("nothing launchable found: no Start Menu shortcut resolved to an executable, and the manifest declares no entry point")

@@ -75,6 +75,9 @@ func (s *Store) HasBase() bool {
 // EnsureBase creates the baseline prefix if it is missing.
 func (s *Store) EnsureBase(ctx context.Context, verbose bool) error {
 	if s.HasBase() {
+		// A baseline created before viniget started disabling the menu
+		// builder still has it on, and so does every prefix cloned from it.
+		disableMenuBuilder(ctx, s.Base(), verbose)
 		return nil
 	}
 	// A half-written prefix from an interrupted boot is worse than none.
@@ -86,7 +89,40 @@ func (s *Store) EnsureBase(ctx context.Context, verbose bool) error {
 		os.RemoveAll(s.Base())
 		return err
 	}
+	disableMenuBuilder(ctx, s.Base(), verbose)
 	return nil
+}
+
+// menuBuilderOff is the registry value NoMenuBuilder writes, as it appears in
+// user.reg once wineserver has flushed it.
+const menuBuilderOff = `"winemenubuilder.exe"=""`
+
+// disableMenuBuilder turns wine's menu builder off inside the prefix itself.
+//
+// Runner.Env already disables it for everything viniget runs, so this is for
+// everything it does not: the launcher scripts, and the `WINEPREFIX=... wine
+// <exe>` line viniget prints for a package it found no entry point for.
+// Without it an application that writes a Start Menu shortcut on first launch
+// still puts a second, wine-generated entry in the menu -- see NoMenuBuilder.
+// Written to the baseline only, because every install is a clone of it.
+//
+// Best-effort by design: the environment variable is the guarantee, and a
+// prefix wine cannot write a registry key into is not one worth failing an
+// install over.
+func disableMenuBuilder(ctx context.Context, prefix string, verbose bool) {
+	if data, err := os.ReadFile(filepath.Join(prefix, "user.reg")); err == nil &&
+		strings.Contains(string(data), menuBuilderOff) {
+		return
+	}
+	r := &Runner{Prefix: prefix, Display: Headless(), Verbose: verbose}
+	if _, err := r.Run(ctx, ServerWait, "wine", "reg", "add", `HKCU\Software\Wine\DllOverrides`,
+		"/v", "winemenubuilder.exe", "/t", "REG_SZ", "/d", "", "/f"); err != nil {
+		return
+	}
+	// The key lives in the running wineserver until it exits, and the check
+	// above reads the file, so settling here is what keeps this from running
+	// again on every install.
+	r.Settle(ctx)
 }
 
 // Clone reflinks the baseline prefix to dest, replacing anything already there.

@@ -89,19 +89,47 @@ type Runner struct {
 	Output io.Writer
 }
 
+// NoMenuBuilder disables wine's own menu builder.
+//
+// winemenubuilder.exe writes a .desktop file and an icon into the user's XDG
+// directories for every Start Menu shortcut an installer creates, pointing at
+// whatever WINEPREFIX was current at the time. During an install that is the
+// ".installing" staging prefix, which is renamed away the moment the install
+// succeeds -- so what lands in the menu is a duplicate of viniget's own entry
+// that was already broken when it appeared, and nothing ever comes back to
+// correct it. viniget builds its entries from the finished prefix instead, so
+// the builtin is turned off everywhere: here for every command viniget runs,
+// and in the prefix's own registry for the ones it does not.
+const NoMenuBuilder = "winemenubuilder.exe=d"
+
 // Env returns the environment a wine command runs under.
 func (r *Runner) Env() []string {
 	env := append(os.Environ(), "WINEPREFIX="+r.Prefix)
 	if !r.Verbose {
 		env = append(env, "WINEDEBUG=-all")
 	}
-	if r.NoRuntimePrompts {
-		env = append(env, "WINEDLLOVERRIDES=mscoree,mshtml=")
-	}
+	env = append(env, "WINEDLLOVERRIDES="+r.overrides())
 	if r.Display.Value != "" {
 		env = append(env, "DISPLAY="+r.Display.Value)
 	}
 	return env
+}
+
+// overrides composes WINEDLLOVERRIDES.
+//
+// One variable has to carry every override wine is given, so an inherited
+// value is kept rather than replaced and viniget's are appended to it: a
+// later entry wins, which is what keeps somebody else's WINEDLLOVERRIDES from
+// turning the menu builder back on.
+func (r *Runner) overrides() string {
+	parts := make([]string, 0, 3)
+	if inherited := os.Getenv("WINEDLLOVERRIDES"); inherited != "" {
+		parts = append(parts, inherited)
+	}
+	if r.NoRuntimePrompts {
+		parts = append(parts, "mscoree,mshtml=")
+	}
+	return strings.Join(append(parts, NoMenuBuilder), ";")
 }
 
 // Run executes argv inside the prefix, wrapped in whatever display strategy

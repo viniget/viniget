@@ -60,6 +60,15 @@ func Uninstall(db *DB, prefixes *wine.Store, dirs desktop.Dirs, id string) (*Rem
 	// globbing, which is what makes an orphan cleanable at all.
 	files, err := desktop.Remove(dirs, id, rec.Desktop)
 	out.Desktop = files
+	// Wine's menu builder wrote entries of its own for anything installed
+	// before viniget started disabling it, and they name the prefix that is
+	// about to be deleted. Nothing else would ever clean them up.
+	if prefix := rec.Prefix; prefix != "" || !recorded {
+		if prefix == "" {
+			prefix, _ = prefixes.For(id)
+		}
+		out.Desktop = append(out.Desktop, desktop.PruneWineMenu(dirs, prefix)...)
+	}
 	if err != nil {
 		// Not fatal, and deliberately so: a menu entry that could not be
 		// deleted is a smaller problem than a prefix left on disk because
