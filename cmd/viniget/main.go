@@ -1,8 +1,9 @@
-// Command viniget is a client for the public winget package index.
+// Command viniget installs winget packages on Linux.
 //
-// This is the index milestone: search and inspect packages, with no Wine
-// involved. Install, desktop integration and the compatibility database come
-// later.
+// Search, show and update are pure metadata and need no Wine at all. Install
+// is where Wine enters: it picks the variant Wine can drive, downloads it,
+// clones the baseline prefix, runs the installer unattended, and scores the
+// result on the filesystem delta rather than the exit code.
 package main
 
 import (
@@ -22,6 +23,8 @@ const usage = `viniget - winget packages for Linux
 Usage:
   viniget search <term>   Search the package index
   viniget show <id>       Show a package's manifest
+  viniget install <id>    Install a package into its own wine prefix
+  viniget list            List installed packages
   viniget update          Refresh the package index
 
 Run "viniget <command> -h" for command flags.
@@ -40,6 +43,10 @@ func run() int {
 		return cmdSearch(args)
 	case "show":
 		return cmdShow(args)
+	case "install":
+		return cmdInstall(args)
+	case "list", "ls":
+		return cmdList(args)
 	case "update":
 		return cmdUpdate(args)
 	case "help", "-h", "--help":
