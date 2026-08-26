@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/viniget/viniget/internal/githubauth"
 )
 
 // userAgent identifies viniget to vendor download servers. Several of them
@@ -21,9 +23,10 @@ const userAgent = "viniget/0.2 (+https://github.com/viniget/viniget)"
 
 // Downloader fetches installer payloads into a content-addressed cache.
 type Downloader struct {
-	Dir      string
-	Client   *http.Client
-	Progress io.Writer // nil for quiet
+	Dir         string
+	Client      *http.Client
+	GitHubToken string
+	Progress    io.Writer // nil for quiet
 }
 
 // NewDownloader returns a Downloader writing under dir.
@@ -80,6 +83,7 @@ func (d *Downloader) Get(ctx context.Context, url, want string) (string, error) 
 		return "", err
 	}
 	req.Header.Set("User-Agent", userAgent)
+	githubauth.Add(req, d.GitHubToken)
 	resp, err := d.Client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", url, err)

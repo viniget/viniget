@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/viniget/viniget/internal/githubauth"
 	"github.com/viniget/viniget/internal/index"
 )
 
@@ -186,7 +187,8 @@ type Package struct {
 
 // Fetcher retrieves manifests over HTTP.
 type Fetcher struct {
-	Client *http.Client
+	Client      *http.Client
+	GitHubToken string
 	// Fallback resolves a manifest base path when the derived one 404s. It is
 	// optional; without it a 404 is simply an error.
 	Fallback func(ctx context.Context, id, version string) (string, error)
@@ -208,6 +210,7 @@ func (f *Fetcher) get(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	githubauth.Add(req, f.GitHubToken)
 	resp, err := f.client().Do(req)
 	if err != nil {
 		return nil, err

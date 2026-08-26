@@ -142,6 +142,20 @@ generated launchers); payloads and the index cache live in
 a package and leaves the second alone: a payload is keyed by its digest and
 may be the same file another package installs from.
 
+GitHub authentication is optional. To authenticate manifest requests and
+GitHub-hosted installer downloads, set a personal access token in
+`VINIGET_GH_TOKEN`, analogous to Scoop's `SCOOP_GH_TOKEN`:
+
+```sh
+export VINIGET_GH_TOKEN=github_pat_...
+viniget install <id>
+```
+
+`GH_TOKEN` and `GITHUB_TOKEN` are also recognized, in that order, when the
+viniget-specific variable is unset. The credential is sent only to
+`github.com`, its subdomains, and `githubusercontent.com` hosts; arbitrary
+vendor download servers never receive it.
+
 Desktop integration writes to the standard per-user locations —
 `$XDG_DATA_HOME/applications`, `.../icons/hicolor` and `.../mime/packages` —
 and nowhere else. Nothing is installed system-wide, because an application

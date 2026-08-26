@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,10 @@ import (
 )
 
 const interstitial = "<html><body>your download will start shortly</body></html>"
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
@@ -124,6 +129,27 @@ func TestGetBoundsRedirects(t *testing.T) {
 	d := NewDownloader(t.TempDir())
 	if _, err := d.Get(context.Background(), srv.URL+"/file.exe", ""); err == nil {
 		t.Fatal("Get followed an unbounded redirect loop")
+	}
+}
+
+func TestGetAuthenticatesGitHubDownload(t *testing.T) {
+	d := NewDownloader(t.TempDir())
+	d.GitHubToken = "secret"
+	d.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q, want Bearer secret", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": {"application/octet-stream"}},
+			Body:       io.NopCloser(strings.NewReader("payload")),
+			Request:    req,
+		}, nil
+	})
+
+	if _, err := d.Get(context.Background(), "https://github.com/owner/repo/file.exe", ""); err != nil {
+		t.Fatalf("Get: %v", err)
 	}
 }
 

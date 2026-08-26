@@ -12,6 +12,7 @@ import (
 
 	"github.com/viniget/viniget/internal/cli"
 	"github.com/viniget/viniget/internal/desktop"
+	"github.com/viniget/viniget/internal/githubauth"
 	"github.com/viniget/viniget/internal/index"
 	"github.com/viniget/viniget/internal/install"
 	"github.com/viniget/viniget/internal/manifest"
@@ -44,7 +45,7 @@ func resolve(ctx context.Context, cache string, noRefresh bool, name, version st
 		version = pkg.Version
 	}
 
-	f := &manifest.Fetcher{Fallback: v1Fallback(store)}
+	f := &manifest.Fetcher{GitHubToken: githubauth.TokenFromEnv(), Fallback: v1Fallback(store)}
 	full, err := f.Fetch(ctx, pkg.ID, version)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest: %w", err)
@@ -123,12 +124,13 @@ func cmdInstall(args []string) int {
 		log = nil
 	}
 	opt := install.Options{
-		Prefixes:   prefixes,
-		Cache:      filepath.Join(index.NewStore(*cache).Dir, "downloads"),
-		Timeout:    *timeout,
-		Verbose:    *verbose,
-		KeepFailed: *keepFailed,
-		Log:        log,
+		Prefixes:    prefixes,
+		Cache:       filepath.Join(index.NewStore(*cache).Dir, "downloads"),
+		GitHubToken: githubauth.TokenFromEnv(),
+		Timeout:     *timeout,
+		Verbose:     *verbose,
+		KeepFailed:  *keepFailed,
+		Log:         log,
 	}
 	if log != nil && isTerminal(os.Stderr) {
 		opt.Progress = log

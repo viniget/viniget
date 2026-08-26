@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/viniget/viniget/internal/cli"
+	"github.com/viniget/viniget/internal/githubauth"
 	"github.com/viniget/viniget/internal/index"
 	"github.com/viniget/viniget/internal/manifest"
 )
@@ -189,7 +190,7 @@ func cmdShow(args []string) int {
 		return errf("no package with id %q (try: viniget search %s)", id, id)
 	}
 
-	f := &manifest.Fetcher{Fallback: v1Fallback(store)}
+	f := &manifest.Fetcher{GitHubToken: githubauth.TokenFromEnv(), Fallback: v1Fallback(store)}
 	full, err := f.Fetch(ctx, pkg.ID, pkg.Version)
 	if err != nil {
 		return errf("fetch manifest: %v", err)

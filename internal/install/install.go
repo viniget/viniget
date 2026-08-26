@@ -85,6 +85,9 @@ type Options struct {
 	Prefixes *wine.Store
 	// Cache is where installer payloads are downloaded to.
 	Cache string
+	// GitHubToken optionally authenticates installer downloads hosted by
+	// GitHub. It is never attached to non-GitHub URLs.
+	GitHubToken string
 	// Timeout bounds the installer run. Zero uses DefaultTimeout.
 	Timeout time.Duration
 	// Display picks the X strategy. The zero value resolves to Headless.
@@ -162,6 +165,7 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 	go func() { booted <- opt.Prefixes.EnsureBase(ctx, opt.Verbose) }()
 
 	dl := NewDownloader(opt.Cache)
+	dl.GitHubToken = opt.GitHubToken
 	dl.Progress = opt.Progress
 	payload, dlErr := dl.Get(ctx, choice.URL, choice.Sha256)
 
