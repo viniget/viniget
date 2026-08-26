@@ -4,7 +4,10 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/viniget/viniget/internal/manifest"
 )
 
 func writeZip(t *testing.T, entries map[string]string) string {
@@ -80,6 +83,101 @@ func TestFindNestedIsCaseInsensitive(t *testing.T) {
 	}
 	if _, ok := findNested(root, `Tools\Bin\missing.exe`); ok {
 		t.Error("findNested found a file that is not there")
+	}
+}
+
+func TestInferPortableEntry(t *testing.T) {
+	root := t.TempDir()
+	files := []string{
+		"Demo.exe",
+		"DemoUpdater.exe",
+		"tools/DemoHelper.exe",
+		"runtime.exe",
+	}
+	for _, name := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("MZ"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := inferPortableEntry(root, "Vendor.Demo.Portable", "Demo (portable)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "Demo.exe")
+	if got != want {
+		t.Errorf("entry = %q, want %q", got, want)
+	}
+}
+
+func TestInferPortableEntryUsesSoleExecutable(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, "bin", "unexpected-name.EXE")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("MZ"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := inferPortableEntry(root, "Vendor.Demo")
+	if err != nil || got != want {
+		t.Errorf("entry = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestInferPortableEntryRejectsOnlyHelpers(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"unins000.exe", "DemoUpdater.exe", "DemoHelper.exe", "crashpad_handler.exe"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("MZ"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := inferPortableEntry(root, "Vendor.Demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("entry = %q, want no inferred entry for helper executables", got)
+	}
+}
+
+func TestInstallArchiveInfersUndeclaredEntry(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "Demo.exe"), []byte("MZ"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prefix := t.TempDir()
+	res := &Result{ID: "Vendor.Demo", Name: "Demo"}
+	if err := installArchive(&Choice{Type: "portable", URL: "https://example.test/demo.zip"}, src, prefix, res); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(prefix, "drive_c", "Program Files", "Demo", "Demo.exe")
+	if res.Entry != want {
+		t.Errorf("entry = %q, want %q", res.Entry, want)
+	}
+	if len(res.Notes) < 2 || !strings.Contains(res.Notes[1], "inferred") {
+		t.Errorf("notes = %v, want the heuristic choice to be identified", res.Notes)
+	}
+}
+
+func TestInstallArchiveDoesNotOverrideDeclaredEntry(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "Guess.exe"), []byte("MZ"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prefix := t.TempDir()
+	res := &Result{ID: "Vendor.Demo", Name: "Demo"}
+	c := &Choice{Type: "portable", Nested: []manifest.NestedFile{{RelativeFilePath: "Missing.exe"}}}
+	if err := installArchive(c, src, prefix, res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Entry != "" {
+		t.Errorf("entry = %q; an explicit manifest path must not be replaced by a guess", res.Entry)
 	}
 }
 

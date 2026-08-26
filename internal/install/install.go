@@ -352,8 +352,8 @@ func drive(ctx context.Context, r *wine.Runner, c *Choice, payload, prefix strin
 // installArchive places an extracted or portable payload into Program Files.
 //
 // Archive packages have no installer to register anything, so their entry
-// point comes from NestedInstallerFiles in the manifest -- the one case where
-// the launch target is not read out of a Start Menu shortcut.
+// point comes from NestedInstallerFiles in the manifest. When that declaration
+// is absent, infer the most likely executable from the extracted payload.
 func installArchive(c *Choice, src, prefix string, res *Result) error {
 	dest := programFiles(prefix, res.ID)
 	if err := os.MkdirAll(dest, 0o755); err != nil {
@@ -376,13 +376,33 @@ func installArchive(c *Choice, src, prefix string, res *Result) error {
 	if err := moveTree(src, dest); err != nil {
 		return err
 	}
+	declared := false
 	for _, nested := range c.Nested {
 		if nested.RelativeFilePath == "" {
 			continue
 		}
+		declared = true
 		if found, ok := findNested(dest, nested.RelativeFilePath); ok {
 			res.Entry = found
 			break
+		}
+	}
+	if res.Entry == "" && !declared {
+		hints := []string{res.Name}
+		for _, nested := range c.Nested {
+			hints = append(hints, nested.PortableCommandAlias)
+		}
+		entry, err := inferPortableEntry(dest, res.ID, hints...)
+		if err != nil {
+			return err
+		}
+		if entry != "" {
+			res.Entry = entry
+			rel, err := filepath.Rel(dest, entry)
+			if err != nil {
+				rel = filepath.Base(entry)
+			}
+			res.note("entry point inferred from portable payload: %s", rel)
 		}
 	}
 	return nil

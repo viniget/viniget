@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -134,6 +136,154 @@ func lookupInsensitive(root string, parts []string) (string, bool) {
 		}
 	}
 	return cur, true
+}
+
+// inferPortableEntry finds the executable an extracted portable package most
+// likely expects a user to launch. Portable archives do not create Start Menu
+// shortcuts and some manifests omit NestedInstallerFiles, so there is no
+// authoritative source left in that case.
+//
+// Package-related names beat unrelated ones, files nearer the archive root
+// beat bundled tools, and shorter names break the remaining ties. Obvious
+// installers, uninstallers, updaters and crash helpers are excluded unless
+// their name exactly matches a package hint. The final path comparison keeps
+// the result deterministic even when the archive contains equivalent choices.
+func inferPortableEntry(root, id string, hints ...string) (string, error) {
+	type candidate struct {
+		path  string
+		rel   string
+		key   string
+		match int
+		depth int
+	}
+
+	keys := portableHints(id, hints...)
+	var found []candidate
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(d.Name()), ".exe") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		key := portableKey(strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())))
+		match := portableNameMatch(key, keys)
+		if match != 0 && portableNoise(key) {
+			return nil
+		}
+		found = append(found, candidate{
+			path: path, rel: rel, key: key, match: match,
+			depth: strings.Count(filepath.ToSlash(rel), "/"),
+		})
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "", nil
+	}
+
+	sort.Slice(found, func(i, j int) bool {
+		a, b := found[i], found[j]
+		if a.match != b.match {
+			return a.match < b.match
+		}
+		if a.depth != b.depth {
+			return a.depth < b.depth
+		}
+		if len(a.key) != len(b.key) {
+			return len(a.key) < len(b.key)
+		}
+		al, bl := strings.ToLower(a.rel), strings.ToLower(b.rel)
+		if al != bl {
+			return al < bl
+		}
+		return a.rel < b.rel
+	})
+	return found[0].path, nil
+}
+
+// portableHints turns the package identifier, display name and command aliases
+// into the filename fragments publishers commonly reuse for the main
+// executable.
+func portableHints(id string, hints ...string) []string {
+	seen := map[string]bool{}
+	var keys []string
+	add := func(s string) {
+		base := filepath.Base(strings.SplitN(s, "?", 2)[0])
+		key := portableKey(strings.TrimSuffix(base, filepath.Ext(base)))
+		if key == "" || seen[key] || portableGenericHint(key) {
+			return
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+
+	add(id)
+	parts := strings.Split(id, ".")
+	if len(parts) > 1 {
+		// The first identifier segment is normally the publisher. Later
+		// segments cover IDs such as Vendor.Product.Portable when PackageName
+		// is unavailable.
+		for _, part := range parts[1:] {
+			add(part)
+		}
+	}
+	for _, hint := range hints {
+		add(hint)
+	}
+	return keys
+}
+
+// portableNameMatch returns 0 for an exact hint match, 1 for a useful partial
+// match and 2 for an unrelated name.
+func portableNameMatch(name string, hints []string) int {
+	best := 2
+	for _, hint := range hints {
+		if name == hint {
+			return 0
+		}
+		if len(name) >= 3 && len(hint) >= 3 &&
+			(strings.Contains(name, hint) || strings.Contains(hint, name)) {
+			best = 1
+		}
+	}
+	return best
+}
+
+func portableKey(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func portableGenericHint(s string) bool {
+	switch s {
+	case "portable", "x64", "x86", "win64", "win32", "64bit", "32bit":
+		return true
+	}
+	return false
+}
+
+func portableNoise(s string) bool {
+	for _, fragment := range []string{
+		"unins", "uninstall", "setup", "install", "update",
+		"crashpad", "crashreport", "helper", "vcredist",
+	} {
+		if strings.Contains(s, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // isZip reports whether a payload is really a zip, whatever type the manifest

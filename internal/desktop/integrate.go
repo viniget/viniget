@@ -27,8 +27,8 @@ type Package struct {
 	Extensions []string
 	// Prefix is the wine prefix the package was installed into.
 	Prefix string
-	// Entry is a manifest-declared entry point. Archive packages have no
-	// installer to write a shortcut, so this is all they ever have.
+	// Entry is an archive package's declared or inferred entry point. Archive
+	// packages have no installer to write a shortcut, so this is all they have.
 	Entry string
 	// DLLOverrides is the WINEDLLOVERRIDES the generated launchers carry, for
 	// the few applications that will not start under wine without one.
@@ -111,8 +111,8 @@ func (r *Result) note(format string, a ...any) {
 // Apps discovers the launchable applications a prefix contains, best first.
 //
 // The Start Menu is the source of truth. A package that installed no shortcut
-// at all falls back to the entry point its manifest declared, which is the
-// only thing archive packages ever have.
+// at all falls back to the archive entry point found during installation,
+// which is the only thing archive packages ever have.
 func Apps(pkg Package) []App {
 	var apps []App
 	seen := map[string]bool{}
@@ -242,7 +242,7 @@ func Integrate(pkg Package, opt Options) (*Result, error) {
 
 	apps := Apps(pkg)
 	if len(apps) == 0 {
-		res.note("nothing launchable found: no Start Menu shortcut resolved to an executable, and the manifest declares no entry point")
+		res.note("nothing launchable found: no Start Menu shortcut resolved to an executable, and no archive entry point was declared or inferred")
 		return res, nil
 	}
 
