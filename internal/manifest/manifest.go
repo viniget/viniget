@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 
 	"github.com/viniget/viniget/internal/githubauth"
 	"github.com/viniget/viniget/internal/index"

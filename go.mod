@@ -3,7 +3,7 @@ module github.com/viniget/viniget
 go 1.26.5
 
 require (
-	gopkg.in/yaml.v3 v3.0.1
+	github.com/goccy/go-yaml v1.19.2
 	modernc.org/sqlite v1.57.0
 )
 
