@@ -416,9 +416,18 @@ SumatraPDF.SumatraPDF    portable  <span class="ok">ok</span>                   
 </section>
 
 <section>
+  <h2>Runtime helpers</h2>
+  <p class="lede">A required runtime belongs inside the package's isolated prefix, under the same rollback rule as the application itself.</p>
+
+  <p>Viniget exposes a curated set of .NET Winetricks verbs through <code>install -with</code> and <code>helper &lt;package-id&gt;</code>. It also maps exact <code>PackageDependencies</code> and the <code>NetFx3</code> Windows feature from the selected Winget installer. It does not pass arbitrary verbs through, recursively install Winget packages, or infer dependencies from package names and tags.</p>
+  <p>Required and previously recorded helpers run in the application's staging prefix before the filesystem snapshot used to score the installer. Their failure aborts the transaction. Automatically inferred helpers are deliberately best effort: each runs in its own reflink checkpoint, which is discarded on failure before the application installer continues. For modern .NET declarations carrying <code>MinimumVersion</code>, a successful Winetricks exit is not enough — viniget probes <code>dotnet --list-runtimes</code> and verifies the requested runtime family, major, and minimum version.</p>
+  <p>Winetricks remains an optional host tool rather than a bundled component. A package with no recognized dependency takes the same path as before; an explicit helper reports how to install Winetricks when it is missing, while an inferred helper records a warning and leaves the clean prefix alone.</p>
+</section>
+
+<section>
   <h2>Open questions</h2>
   <ul>
-    <li><strong>Runtime provisioning.</strong> WebView2 and .NET are the dominant real-world failure modes and neither is solved by installer automation. Does viniget map <code>WindowsFeatures</code> and <code>PackageDependencies</code> onto winetricks verbs, or report the gap and stop?</li>
+    <li><strong>More runtime families.</strong> .NET now has a transactional helper path. WebView2, Visual C++ redistributables and ASP.NET still need exact, testable mappings before joining it.</li>
     <li><strong>Opt-in outcome reporting.</strong> Real installs on real machines are far better signal than a CI container. Worth the privacy surface, or does CI-only data suffice?</li>
     <li><strong>WineHQ AppDB cross-reference.</strong> Existing ratings would seed the database for the popular tail, but matching winget IDs to AppDB entries is fuzzy.</li>
   </ul>

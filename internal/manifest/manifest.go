@@ -40,21 +40,41 @@ type NestedFile struct {
 	PortableCommandAlias string `yaml:"PortableCommandAlias" json:"portable_command_alias,omitempty"`
 }
 
+// PackageDependency names another package from the same winget source that
+// the selected installer needs. MinimumVersion is optional in the schema.
+type PackageDependency struct {
+	PackageIdentifier string `yaml:"PackageIdentifier" json:"package_identifier"`
+	MinimumVersion    string `yaml:"MinimumVersion" json:"minimum_version,omitempty"`
+}
+
+// Dependencies are the prerequisites declared for an installer.
+//
+// Winget permits this object both at manifest level and on an individual
+// installer entry. As with the other inheritable installer fields, an entry's
+// object replaces the manifest-level default rather than being merged into it.
+type Dependencies struct {
+	WindowsFeatures      []string            `yaml:"WindowsFeatures" json:"windows_features,omitempty"`
+	WindowsLibraries     []string            `yaml:"WindowsLibraries" json:"windows_libraries,omitempty"`
+	PackageDependencies  []PackageDependency `yaml:"PackageDependencies" json:"package_dependencies,omitempty"`
+	ExternalDependencies []string            `yaml:"ExternalDependencies" json:"external_dependencies,omitempty"`
+}
+
 // Installer is one downloadable variant of a package.
 type Installer struct {
-	Architecture         string       `yaml:"Architecture" json:"architecture,omitempty"`
-	InstallerType        string       `yaml:"InstallerType" json:"installer_type,omitempty"`
-	NestedInstallerType  string       `yaml:"NestedInstallerType" json:"nested_installer_type,omitempty"`
-	NestedInstallerFiles []NestedFile `yaml:"NestedInstallerFiles" json:"nested_installer_files,omitempty"`
-	Scope                string       `yaml:"Scope" json:"scope,omitempty"`
-	InstallerLocale      string       `yaml:"InstallerLocale" json:"installer_locale,omitempty"`
-	InstallerURL         string       `yaml:"InstallerUrl" json:"installer_url,omitempty"`
-	InstallerSha256      string       `yaml:"InstallerSha256" json:"installer_sha256,omitempty"`
-	ProductCode          string       `yaml:"ProductCode" json:"product_code,omitempty"`
-	InstallerSwitches    *Switches    `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
-	FileExtensions       []string     `yaml:"FileExtensions" json:"file_extensions,omitempty"`
-	ElevationRequirement string       `yaml:"ElevationRequirement" json:"elevation_requirement,omitempty"`
-	ReleaseDate          string       `yaml:"ReleaseDate" json:"release_date,omitempty"`
+	Architecture         string        `yaml:"Architecture" json:"architecture,omitempty"`
+	InstallerType        string        `yaml:"InstallerType" json:"installer_type,omitempty"`
+	NestedInstallerType  string        `yaml:"NestedInstallerType" json:"nested_installer_type,omitempty"`
+	NestedInstallerFiles []NestedFile  `yaml:"NestedInstallerFiles" json:"nested_installer_files,omitempty"`
+	Scope                string        `yaml:"Scope" json:"scope,omitempty"`
+	InstallerLocale      string        `yaml:"InstallerLocale" json:"installer_locale,omitempty"`
+	InstallerURL         string        `yaml:"InstallerUrl" json:"installer_url,omitempty"`
+	InstallerSha256      string        `yaml:"InstallerSha256" json:"installer_sha256,omitempty"`
+	ProductCode          string        `yaml:"ProductCode" json:"product_code,omitempty"`
+	InstallerSwitches    *Switches     `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
+	FileExtensions       []string      `yaml:"FileExtensions" json:"file_extensions,omitempty"`
+	Dependencies         *Dependencies `yaml:"Dependencies" json:"dependencies,omitempty"`
+	ElevationRequirement string        `yaml:"ElevationRequirement" json:"elevation_requirement,omitempty"`
+	ReleaseDate          string        `yaml:"ReleaseDate" json:"release_date,omitempty"`
 }
 
 // InstallerManifest is the installer section of a package version.
@@ -65,19 +85,20 @@ type Installer struct {
 // ProductCodes, under a single top-level Scope. Read them through the
 // Effective* accessors rather than off the struct.
 type InstallerManifest struct {
-	PackageIdentifier string      `yaml:"PackageIdentifier" json:"package_identifier,omitempty"`
-	PackageVersion    string      `yaml:"PackageVersion" json:"package_version,omitempty"`
-	InstallerType     string      `yaml:"InstallerType" json:"installer_type,omitempty"`
-	NestedType        string      `yaml:"NestedInstallerType" json:"nested_installer_type,omitempty"`
-	Scope             string      `yaml:"Scope" json:"scope,omitempty"`
-	InstallerLocale   string      `yaml:"InstallerLocale" json:"installer_locale,omitempty"`
-	ProductCode       string      `yaml:"ProductCode" json:"product_code,omitempty"`
-	InstallerSwitches *Switches   `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
-	FileExtensions    []string    `yaml:"FileExtensions" json:"file_extensions,omitempty"`
-	Installers        []Installer `yaml:"Installers" json:"installers,omitempty"`
-	ReleaseDate       string      `yaml:"ReleaseDate" json:"release_date,omitempty"`
-	ManifestType      string      `yaml:"ManifestType" json:"-"`
-	ManifestVersion   string      `yaml:"ManifestVersion" json:"manifest_version,omitempty"`
+	PackageIdentifier string        `yaml:"PackageIdentifier" json:"package_identifier,omitempty"`
+	PackageVersion    string        `yaml:"PackageVersion" json:"package_version,omitempty"`
+	InstallerType     string        `yaml:"InstallerType" json:"installer_type,omitempty"`
+	NestedType        string        `yaml:"NestedInstallerType" json:"nested_installer_type,omitempty"`
+	Scope             string        `yaml:"Scope" json:"scope,omitempty"`
+	InstallerLocale   string        `yaml:"InstallerLocale" json:"installer_locale,omitempty"`
+	ProductCode       string        `yaml:"ProductCode" json:"product_code,omitempty"`
+	InstallerSwitches *Switches     `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
+	FileExtensions    []string      `yaml:"FileExtensions" json:"file_extensions,omitempty"`
+	Dependencies      *Dependencies `yaml:"Dependencies" json:"dependencies,omitempty"`
+	Installers        []Installer   `yaml:"Installers" json:"installers,omitempty"`
+	ReleaseDate       string        `yaml:"ReleaseDate" json:"release_date,omitempty"`
+	ManifestType      string        `yaml:"ManifestType" json:"-"`
+	ManifestVersion   string        `yaml:"ManifestVersion" json:"manifest_version,omitempty"`
 }
 
 // EffectiveLocale resolves an entry's locale, falling back to the top-level
@@ -142,6 +163,16 @@ func (m *InstallerManifest) EffectiveFileExtensions(i Installer) []string {
 		return i.FileExtensions
 	}
 	return m.FileExtensions
+}
+
+// EffectiveDependencies resolves an entry's dependency object, falling back
+// to the manifest-level default. The objects are not merged: the winget
+// schema defines the entry value as the complete override.
+func (m *InstallerManifest) EffectiveDependencies(i Installer) *Dependencies {
+	if i.Dependencies != nil {
+		return i.Dependencies
+	}
+	return m.Dependencies
 }
 
 // Documentation is one labelled documentation link.

@@ -268,12 +268,14 @@ func TestSelectNestedExeCanBeInteractive(t *testing.T) {
 }
 
 func TestSelectInheritsTopLevelValues(t *testing.T) {
+	deps := &manifest.Dependencies{WindowsFeatures: []string{"NetFx3"}}
 	m := &manifest.InstallerManifest{
 		InstallerType:     "wix",
 		Scope:             "machine",
 		InstallerLocale:   "en-US",
 		ProductCode:       "{TOP}",
 		InstallerSwitches: &manifest.Switches{Custom: "ALLUSERS=1"},
+		Dependencies:      deps,
 		Installers: []manifest.Installer{
 			{Architecture: "x64", InstallerURL: "http://e/a.msi", ProductCode: "{ENTRY}"},
 		},
@@ -290,6 +292,9 @@ func TestSelectInheritsTopLevelValues(t *testing.T) {
 	}
 	if c.Switches == nil || c.Switches.Custom != "ALLUSERS=1" {
 		t.Errorf("switches not inherited: %+v", c.Switches)
+	}
+	if c.Dependencies != deps {
+		t.Errorf("dependencies not inherited: %+v", c.Dependencies)
 	}
 	if got := m.EffectiveLocale(c.Installer); got != "en-US" {
 		t.Errorf("locale = %q, want the inherited en-US", got)

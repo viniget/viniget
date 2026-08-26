@@ -144,6 +144,43 @@ use it even when Xvfb is installed.
 pacman -S wine xorg-server-xvfb        # or your distribution's equivalents
 ```
 
+## Runtime helpers
+
+Some Windows applications depend on a runtime that is not part of Wine and is
+not bundled by their installer. Viniget can provision curated .NET runtimes
+through the host's `winetricks`; it never downloads or self-updates the
+Winetricks script itself.
+
+```sh
+pacman -S winetricks                    # only needed when a helper is used
+
+viniget helper list                    # supported verbs and host availability
+viniget install Vendor.App -with dotnet48
+viniget helper Vendor.App dotnetdesktop8
+```
+
+`-with` is repeatable. It installs required helpers into the staging prefix
+before the application and aborts atomically if one fails. The standalone
+`helper` command likewise reflink-clones an installed prefix and swaps it into
+place only after every requested verb succeeds, so a partial Winetricks run
+never reaches the live application.
+
+Automatic helpers are on by default for exact manifest mappings:
+`Microsoft.DotNet.Runtime.{6..10}`, `Microsoft.DotNet.DesktopRuntime.{6..10}`,
+their 3.1 counterparts, the .NET Framework 1.1 redistributable, and the
+`NetFx3` Windows feature. Other dependencies are reported without guessing.
+An automatically inferred helper is best effort: its own checkpoint is thrown
+away on failure and the application installer continues with a warning. For a
+modern runtime with `MinimumVersion`, viniget also verifies the matching
+`Microsoft.NETCore.App` or `Microsoft.WindowsDesktop.App` version after
+Winetricks exits.
+
+Use `-no-auto-helpers` to disable inference. Helpers are add-only; to remove
+them, rebuild the whole isolated prefix with
+`viniget install Vendor.App -force -reset-helpers -no-auto-helpers`, adding
+back any wanted helpers with `-with`. Forced reinstalls otherwise preserve all
+recorded helpers.
+
 State lives in `$XDG_DATA_HOME/viniget` (prefixes, `installed.json` and the
 generated launchers); payloads and the index cache live in
 `$XDG_CACHE_HOME/viniget`. Both are overridable per command with `-data` and
@@ -186,6 +223,7 @@ with `-no-associations`.
 - Manifest paths are derivable from `PackageIdentifier` + `PackageVersion`, so the 19.5 MB `source.msix` is never fetched. Verified against all 164,828 paths in the v1 `pathparts` tree — every one matched. It stays wired as a fallback because the layout is a repo convention, not a contract.
 - Searching folds locale forks only. `Mozilla.Firefox.af` collapses into `Mozilla.Firefox`; `Microsoft.DotNet.SDK.10` and `JetBrains.PyCharm.EAP` stay their own rows. 14,586 packages, 14,155 families.
 - Prefixes are copy-on-write. Cloning the 444 MB baseline takes 0.003s on btrfs and consumes no new extents, which makes rollback-before-install free. A failed install never touches the previous prefix: the clone is installed into and swapped in only once it has been scored.
+- Runtime helpers use the same copy-on-write transaction. Required helpers run before the installer's filesystem snapshot, so their DLLs and executables cannot make a broken application installer look successful. Best-effort inferred helpers get a checkpoint of their own and are rolled back independently.
 - Install success is scored on the filesystem delta, never the exit code. PowerToys is the live example — its burn bundle exits 67 having correctly written 1,317 files and 36 executables.
 - Generic `exe` installers use a manifest's `Silent` or `SilentWithProgress` switch when present. Without either, they are the last selection fallback, open visibly on the host display, and receive 15 minutes for the user to finish; `-timeout` overrides both that and the four-minute unattended default. The manifest's `Interactive` and `Custom` switches are passed in GUI mode, but viniget never invents flags.
 - **Never read an installer's output through a pipe.** `wineserver` inherits the write end and outlives the installer by design, so the wait blocks on a pipe nobody will ever close. Measured: WinMerge's Inno setup with `stdout=PIPE` "times out" at 240s; the identical install writing to `/dev/null` exits 0 in **8.9s**, and both leave the same 11 executables on disk. That artifact — not a slow installer — is where the harness's `timeout-but-installed` verdict for WinMerge came from. `harness/README.md` and `docs/v1-design.html` still cite it as a measurement.
@@ -207,10 +245,11 @@ with `-no-associations`.
 
 | path | role |
 |---|---|
-| `cmd/viniget/` | CLI — `search`, `show`, `install`, `uninstall`, `run`, `list`, `desktop`, `update` |
+| `cmd/viniget/` | CLI — `search`, `show`, `install`, `helper`, `uninstall`, `run`, `list`, `desktop`, `update` |
 | `internal/index/` | index fetch, search, locale fold, path resolution |
 | `internal/manifest/` | manifest types and fetching |
 | `internal/install/` | installer selection, silent switches, download, extraction, delta scoring, installed-package state |
+| `internal/helper/` | curated Winetricks verbs, dependency mapping, runtime verification, prefix transactions |
 | `internal/wine/` | prefix store, reflink clone, headless display, command execution |
 | `internal/desktop/` | `.lnk` parsing, PE/ICO icon extraction, `.desktop` entries, MIME associations, launchers |
 | `internal/cli/` | terminal rendering |

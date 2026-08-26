@@ -114,6 +114,12 @@ func TestSwapKeepsThePreviousPrefixUntilTheMoveSucceeds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(staging, "drive_c", "new"), []byte("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(staging, "dosdevices"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(staging, "drive_c"), filepath.Join(staging, "dosdevices", "c:")); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Swap(staging, final); err != nil {
 		t.Fatal(err)
@@ -123,6 +129,9 @@ func TestSwapKeepsThePreviousPrefixUntilTheMoveSucceeds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(final, "drive_c", "old")); err == nil {
 		t.Error("the previous prefix survived the swap")
+	}
+	if target, err := os.Readlink(filepath.Join(final, "dosdevices", "c:")); err != nil || target != "../drive_c" {
+		t.Errorf("swapped prefix c: = %q, %v; want ../drive_c", target, err)
 	}
 	if _, err := os.Stat(staging); err == nil {
 		t.Error("the staging prefix was left behind")
@@ -153,6 +162,46 @@ func TestStorePaths(t *testing.T) {
 	got, err := s.For("Notepad++.Notepad++")
 	if err != nil || got != "/data/prefixes/Notepad++.Notepad++" {
 		t.Errorf("For = %q, %v", got, err)
+	}
+}
+
+func TestCloneFromPreservesSourceAndNormalizesDestination(t *testing.T) {
+	store := NewStore(t.TempDir())
+	src := fakePrefix(t)
+	file := filepath.Join(src, "drive_c", "Program Files", "Demo", "app.exe")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("app"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(store.Dir, "prefixes", "Demo.clone")
+	if err := store.CloneFrom(src, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("source was changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "drive_c", "Program Files", "Demo", "app.exe")); err != nil {
+		t.Errorf("destination lost source file: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(dest, "dosdevices", "c:"))
+	if err != nil || target != "../drive_c" {
+		t.Errorf("destination c: = %q, %v", target, err)
+	}
+}
+
+func TestPathsIncludesHelperTransactionDebris(t *testing.T) {
+	store := NewStore(t.TempDir())
+	prefix, _ := store.For("Vendor.Demo")
+	for _, path := range []string{prefix + ".helping", prefix + ".installing.previous"} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := store.Paths("Vendor.Demo")
+	if len(paths) != 2 {
+		t.Errorf("Paths = %v, want helper checkpoint and interrupted swap backup", paths)
 	}
 }
 

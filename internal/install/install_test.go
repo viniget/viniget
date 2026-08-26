@@ -2,13 +2,17 @@ package install
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/viniget/viniget/internal/helper"
 	"github.com/viniget/viniget/internal/manifest"
 	"github.com/viniget/viniget/internal/wine"
 )
@@ -139,5 +143,180 @@ func TestInteractiveExeRequiresDisplayBeforeWineOrDownload(t *testing.T) {
 	}
 	if res == nil || res.Status != StatusError || !res.Interactive {
 		t.Errorf("result = %+v, want an interactive install-error", res)
+	}
+}
+
+func helperInstallFixture(t *testing.T, failVerb string) (*wine.Store, *helper.Executor, *httptest.Server) {
+	t.Helper()
+	bin := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	write("wine", `
+if [ "$1" = --version ]; then echo wine-test; fi
+exit 0
+`)
+	write("wineserver", "exit 0\n")
+	write("xvfb-run", `
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -a) shift ;;
+    -s) shift 2 ;;
+    *) exec "$@" ;;
+  esac
+done
+`)
+	winetricks := write("winetricks", `
+if [ "$1" = list-all ]; then
+  printf '%s\n' 'dotnet35sp1 Framework' 'dotnet48 Framework'
+  exit 0
+fi
+for arg in "$@"; do verb="$arg"; done
+mkdir -p "$WINEPREFIX/drive_c/Program Files/Runtime"
+printf MZ > "$WINEPREFIX/drive_c/Program Files/Runtime/$verb.exe"
+if [ "$verb" = "`+failVerb+`" ]; then exit 9; fi
+exit 0
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	executor, err := helper.NewExecutor(context.Background(), winetricks)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := wine.NewStore(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(store.Base(), "drive_c", "Program Files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Base(), "system.reg"), []byte("REGEDIT4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("MZ portable application"))
+	}))
+	t.Cleanup(srv.Close)
+	return store, executor, srv
+}
+
+func portablePackage(url string, dependencies *manifest.Dependencies) *manifest.Package {
+	return &manifest.Package{
+		ID: "Vendor.Demo", Version: "1.0",
+		Installer: &manifest.InstallerManifest{
+			InstallerType: "portable", Dependencies: dependencies,
+			Installers: []manifest.Installer{{Architecture: "x64", InstallerURL: url}},
+		},
+	}
+}
+
+func TestRequiredHelperRunsBeforeScoring(t *testing.T) {
+	store, executor, srv := helperInstallFixture(t, "")
+	res, err := Run(context.Background(), portablePackage(srv.URL+"/demo.exe", nil), Options{
+		Prefixes: store, Cache: t.TempDir(), Display: wine.Display{Kind: "test"},
+		ExplicitHelpers: []string{"dotnet48"}, HelperExecutor: executor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusOK || res.NewExecutables != 1 {
+		t.Errorf("result = %+v; helper executable must be excluded from app scoring", res)
+	}
+	if len(res.Helpers) != 1 || res.Helpers[0].Status != helper.StatusInstalled {
+		t.Errorf("helpers = %+v", res.Helpers)
+	}
+	for _, rel := range []string{
+		"drive_c/Program Files/Runtime/dotnet48.exe",
+		"drive_c/Program Files/Demo/demo.exe",
+	} {
+		if _, err := os.Stat(filepath.Join(res.Prefix, rel)); err != nil {
+			t.Errorf("installed prefix missing %s: %v", rel, err)
+		}
+	}
+}
+
+func TestAutomaticHelperFailureRollsBackAndContinues(t *testing.T) {
+	store, executor, srv := helperInstallFixture(t, "dotnet35sp1")
+	deps := &manifest.Dependencies{WindowsFeatures: []string{"NetFx3"}}
+	res, err := Run(context.Background(), portablePackage(srv.URL+"/demo.exe", deps), Options{
+		Prefixes: store, Cache: t.TempDir(), Display: wine.Display{Kind: "test"},
+		AutoHelpers: true, HelperExecutor: executor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusOK || len(res.Helpers) != 1 || res.Helpers[0].Status != helper.StatusFailed {
+		t.Fatalf("result = %+v", res)
+	}
+	partial := filepath.Join(res.Prefix, "drive_c", "Program Files", "Runtime", "dotnet35sp1.exe")
+	if _, err := os.Stat(partial); !os.IsNotExist(err) {
+		t.Errorf("failed automatic helper leaked into app prefix: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(res.Prefix, "drive_c", "Program Files", "Demo", "demo.exe")); err != nil {
+		t.Errorf("app installer did not continue: %v", err)
+	}
+}
+
+func TestMissingWinetricksDoesNotBlockAutomaticHelper(t *testing.T) {
+	store, executor, srv := helperInstallFixture(t, "")
+	bin := filepath.Dir(executor.Binary)
+	if err := os.Remove(executor.Binary); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := exec.LookPath("cp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(cp, filepath.Join(bin, "cp")); err != nil {
+		t.Fatal(err)
+	}
+	// Do not let the system Winetricks later in the original PATH satisfy the
+	// lookup; every other executable this install needs is in the fake bin.
+	t.Setenv("PATH", bin)
+	deps := &manifest.Dependencies{WindowsFeatures: []string{"NetFx3"}}
+	res, err := Run(context.Background(), portablePackage(srv.URL+"/demo.exe", deps), Options{
+		Prefixes: store, Cache: t.TempDir(), Display: wine.Display{Kind: "test"}, AutoHelpers: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusOK || len(res.Helpers) != 1 || res.Helpers[0].Status != helper.StatusUnavailable {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestDisabledAutomaticHelpersSkipsDependencyInference(t *testing.T) {
+	store, executor, srv := helperInstallFixture(t, "")
+	deps := &manifest.Dependencies{WindowsFeatures: []string{"NetFx3"}}
+	res, err := Run(context.Background(), portablePackage(srv.URL+"/demo.exe", deps), Options{
+		Prefixes: store, Cache: t.TempDir(), Display: wine.Display{Kind: "test"},
+		AutoHelpers: false, HelperExecutor: executor,
+	})
+	if err != nil || res.Status != StatusOK {
+		t.Fatalf("result = %+v, err = %v", res, err)
+	}
+	if len(res.Helpers) != 0 {
+		t.Errorf("disabled automatic helpers ran: %+v", res.Helpers)
+	}
+	runtime := filepath.Join(res.Prefix, "drive_c", "Program Files", "Runtime", "dotnet35sp1.exe")
+	if _, err := os.Stat(runtime); !os.IsNotExist(err) {
+		t.Errorf("disabled helper wrote runtime: %v", err)
+	}
+}
+
+func TestExplicitHelperFailureAbortsBeforeAppInstall(t *testing.T) {
+	store, executor, srv := helperInstallFixture(t, "dotnet35sp1")
+	res, err := Run(context.Background(), portablePackage(srv.URL+"/demo.exe", nil), Options{
+		Prefixes: store, Cache: t.TempDir(), Display: wine.Display{Kind: "test"},
+		ExplicitHelpers: []string{"dotnet35sp1"}, HelperExecutor: executor,
+	})
+	if err == nil || res.Status != StatusError {
+		t.Fatalf("result = %+v, err = %v", res, err)
+	}
+	final, _ := store.For("Vendor.Demo")
+	if _, err := os.Stat(final); !os.IsNotExist(err) {
+		t.Errorf("failed required helper installed the app prefix: %v", err)
 	}
 }

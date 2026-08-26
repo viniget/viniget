@@ -42,6 +42,7 @@ func InstallResult(w io.Writer, r *install.Result) error {
 	row(t, "Took", fmt.Sprintf("%ss (exit %s)", trimFloat(r.Seconds), dash(r.ExitCode)))
 	row(t, "Product code", r.ProductCode)
 	row(t, "Wine", r.WineVersion)
+	row(t, "Helpers", helperNames(r.Helpers))
 	if err := t.Flush(); err != nil {
 		return err
 	}
@@ -74,10 +75,11 @@ func Installed(w io.Writer, records []install.Record) error {
 		return nil
 	}
 	t := newTable(w)
-	fmt.Fprintln(t, "ID\tNAME\tVERSION\tTYPE\tINSTALLED\t")
+	fmt.Fprintln(t, "ID\tNAME\tVERSION\tTYPE\tHELPERS\tINSTALLED\t")
 	for _, r := range records {
-		fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t\n",
-			r.ID, truncate(r.Name, 40), r.Version, r.InstallerType, since(r.InstalledAt))
+		fmt.Fprintf(t, "%s\t%s\t%s\t%s\t%s\t%s\t\n",
+			r.ID, truncate(r.Name, 40), r.Version, r.InstallerType,
+			strings.Join(r.Helpers, ","), since(r.InstalledAt))
 	}
 	return t.Flush()
 }

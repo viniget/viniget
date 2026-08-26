@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/viniget/viniget/internal/helper"
 )
 
 func TestDBRoundTrip(t *testing.T) {
@@ -65,10 +67,29 @@ func TestRecordOf(t *testing.T) {
 	res := &Result{
 		ID: "X.Y", Version: "3", Name: "Ex Why", InstallerType: "inno",
 		Status: StatusOK, Prefix: "/p", Entry: "/p/app.exe", NewExecutables: 2,
+		Helpers: []helper.Result{{Verb: "dotnet48", Status: helper.StatusInstalled}},
 	}
 	r := RecordOf(res)
 	if r.ID != "X.Y" || r.InstallerType != "inno" || r.Entry != "/p/app.exe" || r.NewExecutables != 2 {
 		t.Errorf("RecordOf lost fields: %+v", r)
+	}
+	if len(r.Helpers) != 1 || r.Helpers[0] != "dotnet48" {
+		t.Errorf("RecordOf lost helpers: %+v", r.Helpers)
+	}
+}
+
+func TestOldRecordWithoutHelpersIsBackwardCompatible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "installed.json")
+	if err := os.WriteFile(path, []byte(`[{"id":"Old.App","version":"1","status":"ok","prefix":"/p","installed_at":"2026-01-01T00:00:00Z"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := db.Get("Old.App")
+	if !ok || rec.Helpers != nil {
+		t.Errorf("old record = %+v, %v", rec, ok)
 	}
 }
 

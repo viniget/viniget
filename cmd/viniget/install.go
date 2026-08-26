@@ -13,6 +13,7 @@ import (
 	"github.com/viniget/viniget/internal/cli"
 	"github.com/viniget/viniget/internal/desktop"
 	"github.com/viniget/viniget/internal/githubauth"
+	"github.com/viniget/viniget/internal/helper"
 	"github.com/viniget/viniget/internal/index"
 	"github.com/viniget/viniget/internal/install"
 	"github.com/viniget/viniget/internal/manifest"
@@ -58,11 +59,16 @@ func resolve(ctx context.Context, cache string, noRefresh bool, name, version st
 
 func cmdInstall(args []string) int {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	var with stringList
 	version := fs.String("version", "", "install a specific version instead of the latest")
 	timeout := fs.Duration("timeout", 0,
 		"override how long the installer may run (default 4m unattended, 15m interactive)")
 	force := fs.Bool("force", false, "reinstall a package that is already installed")
 	keepFailed := fs.Bool("keep-failed", false, "keep the prefix from a failed install for inspection")
+	fs.Var(&with, "with", "install a required helper verb before the package (repeatable)")
+	noAutoHelpers := fs.Bool("no-auto-helpers", false, "do not infer helpers from manifest dependencies")
+	helperTimeout := fs.Duration("helper-timeout", helper.DefaultTimeout, "maximum runtime for each helper verb")
+	resetHelpers := fs.Bool("reset-helpers", false, "with -force, do not preserve helpers recorded by the previous install")
 	visible := fs.Bool("visible", false, "run the installer on your own display instead of a private Xvfb")
 	verbose := fs.Bool("verbose", false, "show wine's own output")
 	noDesktop := fs.Bool("no-desktop", false, "do not generate a menu entry, icon or file associations")
@@ -74,6 +80,15 @@ func cmdInstall(args []string) int {
 	dllOverrides := fs.String("dll-overrides", "",
 		"WINEDLLOVERRIDES for the generated launcher; pass it empty to drop the one viniget applies by default")
 	rest := parseArgs(fs, args)
+	if *resetHelpers && !*force {
+		fmt.Fprintln(os.Stderr, "viniget: -reset-helpers requires -force")
+		return 2
+	}
+	for _, name := range with {
+		if _, err := helper.Lookup(name); err != nil {
+			return errf("%v", err)
+		}
+	}
 
 	// Distinguished from "left alone" so that clearing an override sticks
 	// rather than being reapplied from the quirk table on the next run.
@@ -113,7 +128,8 @@ func cmdInstall(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s is %s\n", name, pkg.ID)
 	}
 
-	if prev, ok := db.Get(pkg.ID); ok && !*force {
+	prev, previouslyInstalled := db.Get(pkg.ID)
+	if previouslyInstalled && !*force {
 		fmt.Fprintf(os.Stderr,
 			"%s %s is already installed in %s\nreinstall it with: viniget install %s -force\n",
 			prev.ID, prev.Version, prev.Prefix, prev.ID)
@@ -125,13 +141,19 @@ func cmdInstall(args []string) int {
 		log = nil
 	}
 	opt := install.Options{
-		Prefixes:    prefixes,
-		Cache:       filepath.Join(index.NewStore(*cache).Dir, "downloads"),
-		GitHubToken: githubauth.TokenFromEnv(),
-		Timeout:     *timeout,
-		Verbose:     *verbose,
-		KeepFailed:  *keepFailed,
-		Log:         log,
+		Prefixes:        prefixes,
+		Cache:           filepath.Join(index.NewStore(*cache).Dir, "downloads"),
+		GitHubToken:     githubauth.TokenFromEnv(),
+		Timeout:         *timeout,
+		Verbose:         *verbose,
+		KeepFailed:      *keepFailed,
+		ExplicitHelpers: append([]string(nil), with...),
+		AutoHelpers:     !*noAutoHelpers,
+		HelperTimeout:   *helperTimeout,
+		Log:             log,
+	}
+	if previouslyInstalled && !*resetHelpers {
+		opt.RecordedHelpers = append([]string(nil), prev.Helpers...)
 	}
 	if log != nil && isTerminal(os.Stderr) {
 		opt.Progress = log
@@ -201,6 +223,16 @@ func cmdInstall(args []string) int {
 		}
 	}
 	return exitFor(res, runErr)
+}
+
+// stringList implements a repeatable string flag without accepting a
+// comma-separated mini-language that helper names do not need.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+func (s *stringList) Set(value string) error {
+	*s = append(*s, value)
+	return nil
 }
 
 // isTerminal reports whether f is a tty, which decides whether a rewriting

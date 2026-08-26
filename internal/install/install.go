@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/viniget/viniget/internal/helper"
 	"github.com/viniget/viniget/internal/manifest"
 	"github.com/viniget/viniget/internal/wine"
 )
@@ -58,26 +59,27 @@ func (s Status) Installed() bool {
 
 // Result is everything one install attempt produced.
 type Result struct {
-	ID             string    `json:"id"`
-	Version        string    `json:"version"`
-	Name           string    `json:"name,omitempty"`
-	InstallerType  string    `json:"installer_type"`
-	Container      string    `json:"container,omitempty"`
-	Interactive    bool      `json:"interactive,omitempty"`
-	Status         Status    `json:"status"`
-	Prefix         string    `json:"prefix,omitempty"`
-	Scope          string    `json:"scope,omitempty"`
-	Architecture   string    `json:"architecture,omitempty"`
-	ProductCode    string    `json:"product_code,omitempty"`
-	Seconds        float64   `json:"seconds"`
-	ExitCode       string    `json:"exit_code,omitempty"`
-	NewFiles       int       `json:"new_files"`
-	NewExecutables int       `json:"new_executables"`
-	Entry          string    `json:"entry,omitempty"`
-	FileExtensions []string  `json:"file_extensions,omitempty"`
-	WineVersion    string    `json:"wine_version,omitempty"`
-	InstalledAt    time.Time `json:"installed_at,omitempty"`
-	Notes          []string  `json:"notes,omitempty"`
+	ID             string          `json:"id"`
+	Version        string          `json:"version"`
+	Name           string          `json:"name,omitempty"`
+	InstallerType  string          `json:"installer_type"`
+	Container      string          `json:"container,omitempty"`
+	Interactive    bool            `json:"interactive,omitempty"`
+	Status         Status          `json:"status"`
+	Prefix         string          `json:"prefix,omitempty"`
+	Scope          string          `json:"scope,omitempty"`
+	Architecture   string          `json:"architecture,omitempty"`
+	ProductCode    string          `json:"product_code,omitempty"`
+	Seconds        float64         `json:"seconds"`
+	ExitCode       string          `json:"exit_code,omitempty"`
+	NewFiles       int             `json:"new_files"`
+	NewExecutables int             `json:"new_executables"`
+	Entry          string          `json:"entry,omitempty"`
+	FileExtensions []string        `json:"file_extensions,omitempty"`
+	WineVersion    string          `json:"wine_version,omitempty"`
+	InstalledAt    time.Time       `json:"installed_at,omitempty"`
+	Helpers        []helper.Result `json:"helpers,omitempty"`
+	Notes          []string        `json:"notes,omitempty"`
 }
 
 func (r *Result) note(format string, a ...any) {
@@ -102,6 +104,17 @@ type Options struct {
 	Verbose bool
 	// KeepFailed leaves a failed staging prefix on disk for inspection.
 	KeepFailed bool
+	// RecordedHelpers are durable helper choices preserved across a forced
+	// reinstall. ExplicitHelpers are repeatable -with values from this run.
+	RecordedHelpers []string
+	ExplicitHelpers []string
+	// AutoHelpers maps recognized dependencies from the selected installer.
+	AutoHelpers bool
+	// HelperTimeout bounds each Winetricks verb independently.
+	HelperTimeout time.Duration
+	// HelperExecutor is injectable for tests. Nil locates system Winetricks
+	// only if at least one helper is actually needed.
+	HelperExecutor *helper.Executor
 	// Log receives human-readable progress. Nil is quiet.
 	Log io.Writer
 	// Progress receives the download status line. It is separate from Log
@@ -169,6 +182,37 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		return res, err
 	}
 
+	var inferred []helper.Request
+	if opt.AutoHelpers {
+		var dependencyNotes []string
+		inferred, dependencyNotes = helper.Infer(choice.Dependencies, choice.Arch)
+		for _, note := range dependencyNotes {
+			res.note("%s", note)
+		}
+	}
+	required, automatic, err := helper.Merge(opt.RecordedHelpers, opt.ExplicitHelpers, inferred, choice.Arch)
+	if err != nil {
+		res.Status = StatusError
+		return res, err
+	}
+	executor := opt.HelperExecutor
+	if len(required)+len(automatic) > 0 && executor == nil {
+		executor, err = helper.NewExecutor(ctx, "")
+		if err != nil {
+			if len(required) > 0 {
+				res.Status = StatusError
+				return res, err
+			}
+			for _, req := range automatic {
+				h := helper.ResultFor(req, helper.StatusUnavailable)
+				h.Notes = append(h.Notes, err.Error())
+				res.Helpers = append(res.Helpers, h)
+				res.note("automatic helper %s unavailable: %v; continuing without it", req.Verb, err)
+			}
+			automatic = nil
+		}
+	}
+
 	// The baseline prefix costs 20-40s to create and the payload takes about
 	// as long to fetch. On a first install they are the whole runtime, and
 	// they are independent, so they run together.
@@ -204,6 +248,59 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		return res, err
 	}
 	res.WineVersion = wine.Version(ctx)
+
+	// Required helpers are part of the requested prefix. Any failure discards
+	// staging and leaves a previous install untouched.
+	for _, req := range required {
+		opt.logf("installing helper %s (%s) ...", req.Verb, req.Source)
+		h, helperErr := executor.Apply(ctx, req, helper.Options{
+			Prefix: staging, Display: opt.Display, Timeout: opt.HelperTimeout,
+			Verbose: opt.Verbose, Output: helperOutput(opt),
+		})
+		res.Helpers = append(res.Helpers, h)
+		if helperErr != nil {
+			res.Status = StatusError
+			if !opt.KeepFailed {
+				_ = os.RemoveAll(staging)
+			} else {
+				res.Prefix = staging
+				res.note("failed prefix kept at %s", staging)
+			}
+			return res, helperErr
+		}
+	}
+
+	// Inferred helpers are best effort. Each gets its own reflink checkpoint,
+	// so a failed Winetricks run cannot poison the prefix the app sees.
+	for _, req := range automatic {
+		checkpoint := final + ".helping"
+		if err := opt.Prefixes.CloneFrom(staging, checkpoint); err != nil {
+			_ = os.RemoveAll(checkpoint)
+			h := helper.ResultFor(req, helper.StatusFailed)
+			h.Notes = append(h.Notes, err.Error())
+			res.Helpers = append(res.Helpers, h)
+			res.note("automatic helper %s could not be checkpointed: %v; continuing without it", req.Verb, err)
+			continue
+		}
+		opt.logf("installing helper %s (dependency %s) ...", req.Verb, req.Dependency)
+		h, helperErr := executor.Apply(ctx, req, helper.Options{
+			Prefix: checkpoint, Display: opt.Display, Timeout: opt.HelperTimeout,
+			Verbose: opt.Verbose, Output: helperOutput(opt),
+		})
+		res.Helpers = append(res.Helpers, h)
+		if helperErr == nil {
+			if swapErr := wine.Swap(checkpoint, staging); swapErr != nil {
+				h.Status = helper.StatusFailed
+				h.Notes = append(h.Notes, swapErr.Error())
+				helperErr = swapErr
+			}
+		}
+		res.Helpers[len(res.Helpers)-1] = h
+		if helperErr != nil {
+			_ = os.RemoveAll(checkpoint)
+			res.note("automatic helper %s failed: %v; continuing without it", req.Verb, helperErr)
+		}
+	}
 
 	before, err := snapshot(staging)
 	if err != nil {
@@ -260,9 +357,9 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		// Naming what did land is the difference between "it failed" and a
 		// starting point: an installer that unpacked its payload and then
 		// died leaves a very different trail from one that never ran.
-		for _, f := range delta.Files {
-			if len(res.Notes) > 6 {
-				res.note("... and %d more files", res.NewFiles-4)
+		for i, f := range delta.Files {
+			if i == 4 {
+				res.note("... and %d more files", res.NewFiles-i)
 				break
 			}
 			res.note("wrote %s", f)
@@ -287,6 +384,13 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		res.Entry = strings.Replace(res.Entry, staging, final, 1)
 	}
 	return res, nil
+}
+
+func helperOutput(opt Options) io.Writer {
+	if opt.Verbose {
+		return opt.Log
+	}
+	return nil
 }
 
 // drive runs the chosen installer. Everything type-specific lives here.

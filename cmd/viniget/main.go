@@ -25,6 +25,7 @@ Usage:
   viniget search <term>   Search the package index
   viniget show <id>       Show a package's manifest
   viniget install <id>    Install a package into its own wine prefix
+  viniget helper <id>     Add Winetricks runtime helpers to a package
   viniget uninstall <id>  Remove a package, its prefix and its menu entry
   viniget run <id>        Launch an installed package
   viniget list            List installed packages
@@ -52,6 +53,8 @@ func run() int {
 		return cmdShow(args)
 	case "install":
 		return cmdInstall(args)
+	case "helper", "helpers":
+		return cmdHelper(args)
 	case "uninstall", "remove", "rm":
 		return cmdUninstall(args)
 	case "run":

@@ -132,6 +132,16 @@ func disableMenuBuilder(ctx context.Context, prefix string, verbose bool) {
 
 // Clone reflinks the baseline prefix to dest, replacing anything already there.
 func (s *Store) Clone(dest string) error {
+	return s.CloneFrom(s.Base(), dest)
+}
+
+// CloneFrom reflinks any complete prefix to dest, replacing dest first.
+// Helper transactions use it to checkpoint an installed package without
+// mutating the live prefix. Clone remains the baseline-specific convenience.
+func (s *Store) CloneFrom(src, dest string) error {
+	if src == "" || dest == "" || filepath.Clean(src) == filepath.Clean(dest) {
+		return fmt.Errorf("clone prefix: unusable source or destination")
+	}
 	if err := os.RemoveAll(dest); err != nil {
 		return err
 	}
@@ -142,17 +152,23 @@ func (s *Store) Clone(dest string) error {
 	if err != nil {
 		return fmt.Errorf("cloning a prefix needs coreutils cp: %w", err)
 	}
-	out, err := exec.Command(cp, "-a", "--reflink=auto", s.Base(), dest).CombinedOutput()
+	out, err := exec.Command(cp, "-a", "--reflink=auto", src, dest).CombinedOutput()
 	if err != nil {
+		_ = os.RemoveAll(dest)
 		return fmt.Errorf("clone prefix: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	// Done on the clone rather than trusted from the baseline: a baseline
 	// made by an older viniget still carries the symlink, and cp -a preserves
 	// it faithfully.
 	if _, err := ContainDesktop(dest); err != nil {
+		_ = os.RemoveAll(dest)
 		return err
 	}
-	return normalizeDrives(dest)
+	if err := normalizeDrives(dest); err != nil {
+		_ = os.RemoveAll(dest)
+		return err
+	}
+	return nil
 }
 
 // ContainDesktop replaces a prefix's Desktop folders with real directories,
@@ -208,16 +224,23 @@ type Removal struct {
 // Paths returns the prefix directories that exist for a package.
 //
 // More than one can, and the extras are the interesting part: ".installing"
-// is a failed install kept for inspection, ".previous" is a swap that did not
-// finish. Both are this package's state and nothing else ever looks at them,
-// so whatever removes the prefix has to remove them too.
+// is a failed install kept for inspection, ".helping" is an interrupted
+// inferred-helper checkpoint, and the ".previous" forms are swaps that did
+// not finish. All are this package's state and nothing else ever looks at
+// them, so whatever removes the prefix has to remove them too.
 func (s *Store) Paths(id string) []string {
 	prefix, err := s.For(id)
 	if err != nil {
 		return nil
 	}
 	var out []string
-	for _, path := range []string{prefix, prefix + ".installing", prefix + ".previous"} {
+	for _, path := range []string{
+		prefix,
+		prefix + ".installing",
+		prefix + ".previous",
+		prefix + ".helping",
+		prefix + ".installing.previous",
+	} {
 		if _, err := os.Lstat(path); err == nil {
 			out = append(out, path)
 		}
@@ -281,6 +304,13 @@ func apparentSize(root string) int64 {
 // This is the payoff of cloning: an install that fails leaves the previous
 // prefix exactly as it was, because nothing was ever written into it.
 func Swap(staging, final string) error {
+	// Validate and normalize the candidate while the live prefix is still in
+	// place. Doing this after the renames could commit the candidate and only
+	// then discover an unusable drive mapping, violating the transaction the
+	// caller relies on.
+	if err := normalizeDrives(staging); err != nil {
+		return fmt.Errorf("normalize staging prefix: %w", err)
+	}
 	backup := final + ".previous"
 	os.RemoveAll(backup)
 	if _, err := os.Stat(final); err == nil {
@@ -293,7 +323,7 @@ func Swap(staging, final string) error {
 		return fmt.Errorf("install prefix into place: %w", err)
 	}
 	os.RemoveAll(backup)
-	return normalizeDrives(final)
+	return nil
 }
 
 // normalizeDrives repoints drive_c at the prefix it now lives in.

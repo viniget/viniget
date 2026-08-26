@@ -33,6 +33,9 @@ type Choice struct {
 	// FileExtensions are the file types this variant claims, which desktop
 	// integration turns into associations.
 	FileExtensions []string `json:"file_extensions,omitempty"`
+	// Dependencies are the prerequisites declared for this exact installer
+	// variant, with the manifest-level default already inherited.
+	Dependencies *manifest.Dependencies `json:"dependencies,omitempty"`
 }
 
 // Select makes the Wine-aware installer choice for a package. Locale-specific
@@ -109,6 +112,7 @@ func Select(m *manifest.InstallerManifest, defaultLocale string) (*Choice, error
 			// are the only statement of that package's entry point.
 			Nested:         entry.NestedInstallerFiles,
 			FileExtensions: m.EffectiveFileExtensions(entry),
+			Dependencies:   m.EffectiveDependencies(entry),
 		}
 		if outer := outerType(m, entry); outer == "zip" {
 			c.Container = "zip"

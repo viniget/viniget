@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/viniget/viniget/internal/helper"
 )
 
 // Record is what viniget remembers about an installed package.
@@ -29,6 +31,7 @@ type Record struct {
 	NewFiles       int       `json:"new_files,omitempty"`
 	NewExecutables int       `json:"new_executables,omitempty"`
 	WineVersion    string    `json:"wine_version,omitempty"`
+	Helpers        []string  `json:"helpers,omitempty"`
 	InstalledAt    time.Time `json:"installed_at"`
 	// DLLOverrides is what was asked of the generated launcher's
 	// WINEDLLOVERRIDES. A pointer because "never asked" and "asked for none"
@@ -59,6 +62,7 @@ func RecordOf(r *Result) Record {
 		NewFiles:       r.NewFiles,
 		NewExecutables: r.NewExecutables,
 		WineVersion:    r.WineVersion,
+		Helpers:        helper.SuccessfulVerbs(r.Helpers),
 		InstalledAt:    r.InstalledAt,
 	}
 }
