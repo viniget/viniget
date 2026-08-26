@@ -2,6 +2,7 @@ package install
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -31,7 +32,9 @@ type Choice struct {
 	FileExtensions []string `json:"file_extensions,omitempty"`
 }
 
-// Select makes the Wine-aware installer choice for a package.
+// Select makes the Wine-aware installer choice for a package. Locale-specific
+// variants prefer the Linux host's active message locale, then the package's
+// default locale. Manifest order breaks the remaining ties.
 //
 // It differs from winget's own logic in two ways. MSIX and APPX are hard
 // skipped rather than ranked last, because Wine cannot run them at all. And
@@ -40,13 +43,14 @@ type Choice struct {
 // Start Menu shortcuts, file associations and icons, which is the metadata
 // both desktop integration and launch-target discovery depend on. Extraction
 // is the fallback when no supported installer exists, not the happy path.
-func Select(m *manifest.InstallerManifest) (*Choice, error) {
+func Select(m *manifest.InstallerManifest, defaultLocale string) (*Choice, error) {
 	if m == nil || len(m.Installers) == 0 {
 		return nil, fmt.Errorf("manifest declares no installers")
 	}
 
 	type candidate struct {
 		score  int
+		locale string
 		choice Choice
 	}
 	var (
@@ -105,19 +109,105 @@ func Select(m *manifest.InstallerManifest) (*Choice, error) {
 		if outer := outerType(m, entry); outer == "zip" {
 			c.Container = "zip"
 		}
-		candidates = append(candidates, candidate{score: score, choice: c})
+		candidates = append(candidates, candidate{
+			score: score, locale: m.EffectiveLocale(entry), choice: c,
+		})
 	}
 
 	if len(candidates) == 0 {
 		return nil, &UnsupportedError{Types: seenTypes}
 	}
-	// Stable, so manifest order breaks ties -- publishers list their preferred
-	// variant first.
+	host := hostLocale()
+	listed := candidates[0].locale
+	// Locale is the primary choice: a native x86 build is more useful than an
+	// x64 build the user cannot read. Within one locale, keep the existing
+	// Wine-aware score. The first locale among runnable manifest entries is the
+	// fallback when neither requested locale is present.
 	sort.SliceStable(candidates, func(i, j int) bool {
+		li := localePriority(candidates[i].locale, host, defaultLocale, listed)
+		lj := localePriority(candidates[j].locale, host, defaultLocale, listed)
+		if li != lj {
+			return li > lj
+		}
 		return candidates[i].score > candidates[j].score
 	})
 	best := candidates[0].choice
 	return &best, nil
+}
+
+// hostLocale returns the locale governing translated messages under POSIX.
+// LC_ALL overrides the category-specific value, which in turn overrides LANG.
+func hostLocale() string {
+	for _, name := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
+		if value := os.Getenv(name); value != "" {
+			return normalizeLocale(value)
+		}
+	}
+	return ""
+}
+
+// localePriority ranks an installer's locale against the requested locales
+// and then the locale of the first runnable entry in the manifest.
+// A host language-only match deliberately beats an exact default-locale match:
+// the host preference is the first fallback tier, not merely a tie breaker.
+func localePriority(installer, host, fallback, listed string) int {
+	if match := localeMatch(installer, host); match != 0 {
+		return 4 + match // host exact 6, host language 5
+	}
+	if match := localeMatch(installer, fallback); match != 0 {
+		return 2 + match // default exact 4, default language 3
+	}
+	return listedLocaleMatch(installer, listed) // listed exact 2, language 1
+}
+
+// listedLocaleMatch also matches two empty locales. Empty InstallerLocale is a
+// real manifest choice here: it identifies a locale-neutral installer group.
+func listedLocaleMatch(installer, listed string) int {
+	installer = normalizeLocale(installer)
+	listed = normalizeLocale(listed)
+	if installer == listed {
+		return 2
+	}
+	if installer != "" && listed != "" && localeLanguage(installer) == localeLanguage(listed) {
+		return 1
+	}
+	return 0
+}
+
+// localeMatch returns 2 for an exact locale match and 1 when just the primary
+// language matches. This lets en-US select an installer labelled simply en.
+func localeMatch(installer, wanted string) int {
+	installer = normalizeLocale(installer)
+	wanted = normalizeLocale(wanted)
+	if installer == "" || wanted == "" {
+		return 0
+	}
+	if installer == wanted {
+		return 2
+	}
+	if localeLanguage(installer) == localeLanguage(wanted) {
+		return 1
+	}
+	return 0
+}
+
+// normalizeLocale turns the common Linux locale form en_US.UTF-8 into the
+// BCP-47-shaped en-us used by winget. C and POSIX carry no language preference.
+func normalizeLocale(locale string) string {
+	locale = strings.TrimSpace(locale)
+	if end := strings.IndexAny(locale, ".@"); end >= 0 {
+		locale = locale[:end]
+	}
+	locale = strings.ToLower(strings.ReplaceAll(locale, "_", "-"))
+	if locale == "c" || locale == "posix" {
+		return ""
+	}
+	return locale
+}
+
+func localeLanguage(locale string) string {
+	language, _, _ := strings.Cut(locale, "-")
+	return language
 }
 
 // UnsupportedError reports that no variant of a package can be driven.

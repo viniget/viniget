@@ -41,7 +41,7 @@ func desktopPackage(rec install.Record, pkg *manifest.Package, overrides *string
 		d.Tags = pkg.Locale.Tags
 	}
 	if pkg.Installer != nil {
-		if choice, err := install.Select(pkg.Installer); err == nil {
+		if choice, err := install.Select(pkg.Installer, pkg.DefaultLocale); err == nil {
 			d.Extensions = choice.FileExtensions
 		} else {
 			d.Extensions = pkg.Installer.FileExtensions

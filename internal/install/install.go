@@ -131,7 +131,7 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		res.Name = pkg.Locale.PackageName
 	}
 
-	choice, err := Select(pkg.Installer)
+	choice, err := Select(pkg.Installer, pkg.DefaultLocale)
 	if err != nil {
 		res.Status = StatusUnsupported
 		if pkg.Installer != nil {

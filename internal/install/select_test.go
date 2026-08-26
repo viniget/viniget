@@ -15,7 +15,7 @@ func TestSelectPrefersX64(t *testing.T) {
 			{Architecture: "x64", InstallerURL: "http://e/64.exe"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestSelectPrefersMachineScope(t *testing.T) {
 			{Architecture: "x64", Scope: "machine", InstallerURL: "http://e/machine.exe"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestSelectPenalisesArchives(t *testing.T) {
 			{Architecture: "x86", InstallerType: "nullsoft", InstallerURL: "http://e/setup.exe"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestSelectFallsBackToArchive(t *testing.T) {
 			{Architecture: "x64", InstallerType: "portable", InstallerURL: "http://e/app.exe"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSelectResolvesNestedType(t *testing.T) {
 			InstallerURL:         "http://e/app.zip",
 		}},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSelectCarriesNestedFilesWithoutAZipContainer(t *testing.T) {
 			InstallerURL:         "http://e/app.zip",
 		}},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestSelectSkipsUnrunnableArchitectures(t *testing.T) {
 			{Architecture: "neutral", InstallerURL: "http://e/any.exe"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestSelectRejectsUnsupportedOnly(t *testing.T) {
 			{Architecture: "x64", InstallerType: "exe", InstallerURL: "http://e/a.exe"},
 		},
 	}
-	_, err := Select(m)
+	_, err := Select(m, "")
 	var unsupported *UnsupportedError
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("err = %v, want *UnsupportedError", err)
@@ -166,13 +166,14 @@ func TestSelectInheritsTopLevelValues(t *testing.T) {
 	m := &manifest.InstallerManifest{
 		InstallerType:     "wix",
 		Scope:             "machine",
+		InstallerLocale:   "en-US",
 		ProductCode:       "{TOP}",
 		InstallerSwitches: &manifest.Switches{Custom: "ALLUSERS=1"},
 		Installers: []manifest.Installer{
 			{Architecture: "x64", InstallerURL: "http://e/a.msi", ProductCode: "{ENTRY}"},
 		},
 	}
-	c, err := Select(m)
+	c, err := Select(m, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,13 +186,128 @@ func TestSelectInheritsTopLevelValues(t *testing.T) {
 	if c.Switches == nil || c.Switches.Custom != "ALLUSERS=1" {
 		t.Errorf("switches not inherited: %+v", c.Switches)
 	}
+	if got := m.EffectiveLocale(c.Installer); got != "en-US" {
+		t.Errorf("locale = %q, want the inherited en-US", got)
+	}
+}
+
+func TestSelectLocalePriority(t *testing.T) {
+	tests := []struct {
+		name          string
+		host          string
+		defaultLocale string
+		installers    []manifest.Installer
+		want          string
+	}{
+		{
+			name:          "host before manifest default",
+			host:          "en_US.UTF-8",
+			defaultLocale: "de-DE",
+			installers: []manifest.Installer{
+				{Architecture: "x64", InstallerLocale: "de", InstallerURL: "de"},
+				{Architecture: "x64", InstallerLocale: "en", InstallerURL: "en"},
+			},
+			want: "en",
+		},
+		{
+			name:          "exact region before language match",
+			host:          "pt_BR.UTF-8",
+			defaultLocale: "en-US",
+			installers: []manifest.Installer{
+				{Architecture: "x64", InstallerLocale: "pt-PT", InstallerURL: "pt-PT"},
+				{Architecture: "x64", InstallerLocale: "pt-BR", InstallerURL: "pt-BR"},
+			},
+			want: "pt-BR",
+		},
+		{
+			name:          "manifest default when host unavailable",
+			host:          "vi_VN.UTF-8",
+			defaultLocale: "fr-FR",
+			installers: []manifest.Installer{
+				{Architecture: "x64", InstallerLocale: "de", InstallerURL: "de"},
+				{Architecture: "x86", InstallerLocale: "fr", InstallerURL: "fr"},
+			},
+			want: "fr",
+		},
+		{
+			name:          "manifest order when locales unavailable",
+			host:          "vi_VN.UTF-8",
+			defaultLocale: "ja-JP",
+			installers: []manifest.Installer{
+				{Architecture: "x86", InstallerLocale: "de", InstallerURL: "de"},
+				{Architecture: "x64", InstallerLocale: "fr", InstallerURL: "fr"},
+			},
+			want: "de",
+		},
+		{
+			name:          "C locale uses manifest default",
+			host:          "C.UTF-8",
+			defaultLocale: "en-US",
+			installers: []manifest.Installer{
+				{Architecture: "x64", InstallerLocale: "de", InstallerURL: "de"},
+				{Architecture: "x64", InstallerLocale: "en", InstallerURL: "en"},
+			},
+			want: "en",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LC_ALL", tt.host)
+			t.Setenv("LC_MESSAGES", "ignored")
+			t.Setenv("LANG", "ignored")
+			m := &manifest.InstallerManifest{
+				InstallerType: "portable",
+				Installers:    tt.installers,
+			}
+			got, err := Select(m, tt.defaultLocale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.URL != tt.want {
+				t.Errorf("picked %q, want %q", got.URL, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectLocaleBeforeArchitecture(t *testing.T) {
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	m := &manifest.InstallerManifest{
+		InstallerType: "portable",
+		Installers: []manifest.Installer{
+			{Architecture: "x64", InstallerLocale: "de", InstallerURL: "de-x64"},
+			{Architecture: "x86", InstallerLocale: "fr", InstallerURL: "fr-x86"},
+		},
+	}
+	c, err := Select(m, "de-DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.URL != "fr-x86" {
+		t.Errorf("picked %q; host locale should take priority over architecture", c.URL)
+	}
+}
+
+func TestHostLocalePrecedence(t *testing.T) {
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_MESSAGES", "fr_FR.UTF-8")
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	if got := hostLocale(); got != "en-us" {
+		t.Errorf("host locale = %q, want LC_ALL value en-us", got)
+	}
+
+	t.Setenv("LC_ALL", "")
+	if got := hostLocale(); got != "fr-fr" {
+		t.Errorf("host locale = %q, want LC_MESSAGES value fr-fr", got)
+	}
 }
 
 func TestSelectEmptyManifest(t *testing.T) {
-	if _, err := Select(nil); err == nil {
+	if _, err := Select(nil, ""); err == nil {
 		t.Error("a nil manifest should not select anything")
 	}
-	if _, err := Select(&manifest.InstallerManifest{}); err == nil {
+	if _, err := Select(&manifest.InstallerManifest{}, ""); err == nil {
 		t.Error("a manifest with no installers should not select anything")
 	}
 }

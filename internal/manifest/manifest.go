@@ -59,17 +59,18 @@ type Installer struct {
 
 // InstallerManifest is the installer section of a package version.
 //
-// InstallerType, Scope, ProductCode and InstallerSwitches are all legal both
-// here and on each entry, with the entry winning. 7zip.7zip is the worked
-// example: four exe entries and two wix entries with different ProductCodes,
-// under a single top-level Scope. Read them through the Effective* accessors
-// rather than off the struct.
+// InstallerType, Scope, InstallerLocale, ProductCode and InstallerSwitches are
+// all legal both here and on each entry, with the entry winning. 7zip.7zip is
+// the worked example: four exe entries and two wix entries with different
+// ProductCodes, under a single top-level Scope. Read them through the
+// Effective* accessors rather than off the struct.
 type InstallerManifest struct {
 	PackageIdentifier string      `yaml:"PackageIdentifier" json:"package_identifier,omitempty"`
 	PackageVersion    string      `yaml:"PackageVersion" json:"package_version,omitempty"`
 	InstallerType     string      `yaml:"InstallerType" json:"installer_type,omitempty"`
 	NestedType        string      `yaml:"NestedInstallerType" json:"nested_installer_type,omitempty"`
 	Scope             string      `yaml:"Scope" json:"scope,omitempty"`
+	InstallerLocale   string      `yaml:"InstallerLocale" json:"installer_locale,omitempty"`
 	ProductCode       string      `yaml:"ProductCode" json:"product_code,omitempty"`
 	InstallerSwitches *Switches   `yaml:"InstallerSwitches" json:"installer_switches,omitempty"`
 	FileExtensions    []string    `yaml:"FileExtensions" json:"file_extensions,omitempty"`
@@ -77,6 +78,15 @@ type InstallerManifest struct {
 	ReleaseDate       string      `yaml:"ReleaseDate" json:"release_date,omitempty"`
 	ManifestType      string      `yaml:"ManifestType" json:"-"`
 	ManifestVersion   string      `yaml:"ManifestVersion" json:"manifest_version,omitempty"`
+}
+
+// EffectiveLocale resolves an entry's locale, falling back to the top-level
+// value. An empty locale means the installer is not tied to one locale.
+func (m *InstallerManifest) EffectiveLocale(i Installer) string {
+	if i.InstallerLocale != "" {
+		return i.InstallerLocale
+	}
+	return m.InstallerLocale
 }
 
 // EffectiveType resolves an entry's installer type, falling back to the
