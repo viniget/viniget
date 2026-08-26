@@ -16,6 +16,9 @@ type Choice struct {
 	// Type is the effective installer type, with NestedInstallerType already
 	// applied. For a zip carrying an inno setup this is "inno", not "zip".
 	Type string `json:"installer_type"`
+	// Interactive is true only for a generic exe without a declared silent
+	// mode. It is selected as a last resort and runs on the host display.
+	Interactive bool `json:"interactive,omitempty"`
 	// Container is the outer type when the payload has to be unpacked before
 	// Type can be driven -- "zip", or empty when the download is the installer.
 	Container string `json:"container,omitempty"`
@@ -38,11 +41,11 @@ type Choice struct {
 //
 // It differs from winget's own logic in two ways. MSIX and APPX are hard
 // skipped rather than ranked last, because Wine cannot run them at all. And
-// archive variants are deliberately *penalised* even though extracting is far
-// more reliable than executing an installer: the installer is what registers
-// Start Menu shortcuts, file associations and icons, which is the metadata
-// both desktop integration and launch-target discovery depend on. Extraction
-// is the fallback when no supported installer exists, not the happy path.
+// archive variants are deliberately *penalised* behind unattended installers
+// even though extracting is far more reliable: a full installer registers the
+// Start Menu shortcuts, file associations and icons that desktop integration
+// and launch-target discovery depend on. An archive still beats a generic exe
+// that would require user interaction.
 func Select(m *manifest.InstallerManifest, defaultLocale string) (*Choice, error) {
 	if m == nil || len(m.Installers) == 0 {
 		return nil, fmt.Errorf("manifest declares no installers")
@@ -93,6 +96,7 @@ func Select(m *manifest.InstallerManifest, defaultLocale string) (*Choice, error
 		c := Choice{
 			Installer:   entry,
 			Type:        t,
+			Interactive: IsInteractive(t, sw),
 			Switches:    sw,
 			Scope:       scope,
 			ProductCode: m.EffectiveProductCode(entry),
@@ -128,6 +132,12 @@ func Select(m *manifest.InstallerManifest, defaultLocale string) (*Choice, error
 		lj := localePriority(candidates[j].locale, host, defaultLocale, listed)
 		if li != lj {
 			return li > lj
+		}
+		// A GUI installer needs a person and is the final fallback. This tier
+		// deliberately sits above the archive penalty so even a portable
+		// payload beats an otherwise better interactive exe.
+		if candidates[i].choice.Interactive != candidates[j].choice.Interactive {
+			return !candidates[i].choice.Interactive
 		}
 		return candidates[i].score > candidates[j].score
 	})

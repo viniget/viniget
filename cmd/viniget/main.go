@@ -2,8 +2,8 @@
 //
 // Search, show and update are pure metadata and need no Wine at all. Install
 // is where Wine enters: it picks the variant Wine can drive, downloads it,
-// clones the baseline prefix, runs the installer unattended, and scores the
-// result on the filesystem delta rather than the exit code.
+// clones the baseline prefix, runs it silently or through its visible UI, and
+// scores the result on the filesystem delta rather than the exit code.
 package main
 
 import (

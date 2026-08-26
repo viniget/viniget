@@ -143,11 +143,27 @@ func TestSelectSkipsUnrunnableArchitectures(t *testing.T) {
 	}
 }
 
-func TestSelectRejectsUnsupportedOnly(t *testing.T) {
+func TestSelectFallsBackToInteractiveExe(t *testing.T) {
 	m := &manifest.InstallerManifest{
 		Installers: []manifest.Installer{
 			{Architecture: "x64", InstallerType: "msix", InstallerURL: "http://e/a.msix"},
 			{Architecture: "x64", InstallerType: "exe", InstallerURL: "http://e/a.exe"},
+		},
+	}
+	c, err := Select(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Type != "exe" || !c.Interactive {
+		t.Errorf("choice = %+v, want an interactive exe", c)
+	}
+}
+
+func TestSelectRejectsStructurallyUnsupportedOnly(t *testing.T) {
+	m := &manifest.InstallerManifest{
+		Installers: []manifest.Installer{
+			{Architecture: "x64", InstallerType: "msix", InstallerURL: "http://e/a.msix"},
+			{Architecture: "x64", InstallerType: "appx", InstallerURL: "http://e/a.appx"},
 		},
 	}
 	_, err := Select(m, "")
@@ -159,6 +175,95 @@ func TestSelectRejectsUnsupportedOnly(t *testing.T) {
 	// "viniget declines this" from "the package is broken".
 	if len(unsupported.Types) != 2 {
 		t.Errorf("types = %v, want both offered types listed", unsupported.Types)
+	}
+}
+
+func TestSelectDeclaredExeIsUnattended(t *testing.T) {
+	m := &manifest.InstallerManifest{
+		InstallerType:     "exe",
+		InstallerSwitches: &manifest.Switches{Silent: "/quiet"},
+		Installers: []manifest.Installer{
+			{Architecture: "x64", InstallerURL: "http://e/a.exe"},
+		},
+	}
+	c, err := Select(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Interactive {
+		t.Error("an exe with inherited silent switches should be unattended")
+	}
+}
+
+func TestSelectPrefersUnattendedOverInteractiveExe(t *testing.T) {
+	m := &manifest.InstallerManifest{
+		Installers: []manifest.Installer{
+			{
+				Architecture:  "x64",
+				Scope:         "machine",
+				InstallerType: "exe",
+				InstallerURL:  "http://e/gui.exe",
+			},
+			{
+				Architecture:  "x86",
+				Scope:         "user",
+				InstallerType: "portable",
+				InstallerURL:  "http://e/portable.exe",
+			},
+		},
+	}
+	c, err := Select(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Type != "portable" {
+		t.Errorf("picked %q; an unattended portable must beat an interactive exe", c.Type)
+	}
+}
+
+func TestSelectLocalePrecedesInteractivePreference(t *testing.T) {
+	t.Setenv("LC_ALL", "fr_FR.UTF-8")
+	m := &manifest.InstallerManifest{
+		Installers: []manifest.Installer{
+			{
+				Architecture:    "x64",
+				InstallerLocale: "fr",
+				InstallerType:   "exe",
+				InstallerURL:    "fr-gui",
+			},
+			{
+				Architecture:    "x64",
+				InstallerLocale: "de",
+				InstallerType:   "portable",
+				InstallerURL:    "de-portable",
+			},
+		},
+	}
+	c, err := Select(m, "de-DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.URL != "fr-gui" {
+		t.Errorf("picked %q; host locale must remain the primary criterion", c.URL)
+	}
+}
+
+func TestSelectNestedExeCanBeInteractive(t *testing.T) {
+	m := &manifest.InstallerManifest{
+		Installers: []manifest.Installer{{
+			Architecture:         "x64",
+			InstallerType:        "zip",
+			NestedInstallerType:  "exe",
+			NestedInstallerFiles: []manifest.NestedFile{{RelativeFilePath: `setup\app.exe`}},
+			InstallerURL:         "http://e/app.zip",
+		}},
+	}
+	c, err := Select(m, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Type != "exe" || c.Container != "zip" || !c.Interactive {
+		t.Errorf("choice = %+v, want an interactive exe in zip", c)
 	}
 }
 

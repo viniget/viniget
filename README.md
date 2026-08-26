@@ -1,7 +1,9 @@
 # Viniget
 
 Viniget brings Winget packages to Linux. It manages WINE prefixes, fetches
-Winget package manifests, and installs them under WINE — unattended.
+Winget package manifests, and installs them under WINE — unattended when the
+manifest provides a silent mode, with a visible installer fallback when it
+does not.
 
 Winget ships **14,586 packages** whose manifests already encode how to drive
 each installer silently. That metadata generalises to Wine almost perfectly:
@@ -30,9 +32,11 @@ Mozilla.Firefox.ESR   Mozilla Firefox ESR (en-US)  153.0.0  firefox-esr  +101 lo
 
 So is the installer. `viniget install` picks the variant Wine can drive,
 verifies the download against the manifest's SHA-256, reflinks the baseline
-prefix, runs the installer unattended under a private Xvfb, and scores what
-landed on disk. It takes a package identifier or the moniker in search's
-`MONIKER` column — `viniget install firefox` is `Mozilla.Firefox`.
+prefix, and scores what landed on disk. Known installer formats and generic
+`exe` manifests with declared silent switches run unattended under a private
+Xvfb. A generic `exe` without them opens its installer on the host display for
+the user to complete. The command takes a package identifier or the moniker in
+search's `MONIKER` column — `viniget install firefox` is `Mozilla.Firefox`.
 
 So is desktop integration. The install ends by reading the Start Menu shortcut
 the installer wrote, which is where the launch target comes from — and turning
@@ -93,7 +97,7 @@ prefix a failed install left beside the real one, and a package whose record
 never got written — the one state `viniget list` cannot show — comes out the
 same way, off what is on disk. `-all` clears everything, and asks first.
 
-Measured across every supported installer type on Wine 11.16, x86_64, btrfs:
+Measured across the unattended installer paths on Wine 11.16, x86_64, btrfs:
 
 ```
 7zip.7zip                wix       ok             108 files,   3 exe     7.7s
@@ -104,16 +108,17 @@ Git.Git                  inno      ok            9575 files, 351 exe    43.6s
 WinMerge.WinMerge        inno      ok             337 files,   8 exe    68.9s
 Microsoft.PowerToys      burn      ok            1317 files,  36 exe     152s  exit 67
 Greenshot.Greenshot      inno      no-files                              7.7s
-IrfanSkiljan.IrfanView   exe       unsupported                                 declined
 ```
 
-Three of those rows are the design decisions earning their keep. PowerToys
+Three cases are the design decisions earning their keep. PowerToys
 exits **67** and is installed correctly anyway — the filesystem is what is
 scored. Greenshot 1.3.315 is a real Wine incompatibility, not a driving error:
 its Inno setup dies in `InitializeSetup` with `Unknown custom message name
 "lcid"` whatever switches it is given, and `no-files` is the honest verdict.
-IrfanView is a bare `exe` with no declared switches, which viniget declines to
-guess at.
+IrfanView is a generic `exe` with no declared silent switches: viniget does
+not guess at them, and instead opens the vendor's GUI installer on the host
+display. That user-driven path is deliberately absent from headless harness
+timings.
 
 Eight installs share **~1 GB** of actual disk between them, against 4.8 GB
 apparent: the per-package prefixes are reflink clones of one baseline.
@@ -130,6 +135,8 @@ go build -o viniget ./cmd/viniget
 Installing needs system Wine on `PATH`. `xvfb-run` is optional but strongly
 recommended: without it the installer runs on your own display, where an Inno
 splash or a hidden MSI custom-action window will flash across your desktop.
+Interactive generic `exe` installers always require the host's `DISPLAY` and
+use it even when Xvfb is installed.
 
 ```sh
 pacman -S wine xorg-server-xvfb        # or your distribution's equivalents
@@ -166,7 +173,7 @@ with `-no-associations`.
 ## Build order
 
 1. ~~**Index client** — `search` / `show` against the public winget SQLite index. No Wine involved.~~ **Done.**
-2. ~~**Install** — nullsoft, inno, burn, msi, wix, zip, portable. ~86% of the catalog.~~ **Done.**
+2. ~~**Install** — nullsoft, inno, burn, exe, msi, wix, zip, portable.~~ **Done.**
 3. ~~**Desktop integration** — `.lnk` → `.desktop`, icons, file associations. This is also where
    the launch target comes from.~~ **Done.**
 4. **Compat harness in CI** — verdicts bundled into the index download.
@@ -178,6 +185,7 @@ with `-no-associations`.
 - Searching folds locale forks only. `Mozilla.Firefox.af` collapses into `Mozilla.Firefox`; `Microsoft.DotNet.SDK.10` and `JetBrains.PyCharm.EAP` stay their own rows. 14,586 packages, 14,155 families.
 - Prefixes are copy-on-write. Cloning the 444 MB baseline takes 0.003s on btrfs and consumes no new extents, which makes rollback-before-install free. A failed install never touches the previous prefix: the clone is installed into and swapped in only once it has been scored.
 - Install success is scored on the filesystem delta, never the exit code. PowerToys is the live example — its burn bundle exits 67 having correctly written 1,317 files and 36 executables.
+- Generic `exe` installers use a manifest's `Silent` or `SilentWithProgress` switch when present. Without either, they are the last selection fallback, open visibly on the host display, and receive 15 minutes for the user to finish; `-timeout` overrides both that and the four-minute unattended default. The manifest's `Interactive` and `Custom` switches are passed in GUI mode, but viniget never invents flags.
 - **Never read an installer's output through a pipe.** `wineserver` inherits the write end and outlives the installer by design, so the wait blocks on a pipe nobody will ever close. Measured: WinMerge's Inno setup with `stdout=PIPE` "times out" at 240s; the identical install writing to `/dev/null` exits 0 in **8.9s**, and both leave the same 11 executables on disk. That artifact — not a slow installer — is where the harness's `timeout-but-installed` verdict for WinMerge came from. `harness/README.md` and `docs/v1-design.html` still cite it as a measurement.
 - Launch targets from real installers come from Start Menu `.lnk` files, never from filename matching. Filename matching picks `WinMerge32BitPluginProxy.exe` over `WinMergeU.exe`; the shortcut names the real one. Archive packages have no shortcut and fall back to `NestedInstallerFiles`. If a portable archive omits that declaration, viniget ranks its executables by package-name resemblance and depth, while excluding obvious setup, updater, crash-handler and uninstaller binaries.
 - Icons are read straight out of the payload — `RT_GROUP_ICON`/`RT_ICON` resources in the executable, or an `.ico` on disk — and decoded to PNG in-process. No `icoutils`, no ImageMagick, no Wine involved. Every size the vendor shipped is installed, because a 256×256 scaled down to a 22px panel looks worse than the 22px art already in the same file.

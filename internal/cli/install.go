@@ -58,10 +58,14 @@ func InstallResult(w io.Writer, r *install.Result) error {
 // installerLabel shows the container when there is one, because "portable"
 // and "a zip containing a portable" fail in different ways.
 func installerLabel(r *install.Result) string {
+	label := r.InstallerType
 	if r.Container != "" && r.Container != r.InstallerType {
-		return fmt.Sprintf("%s in %s", r.InstallerType, r.Container)
+		label = fmt.Sprintf("%s in %s", r.InstallerType, r.Container)
 	}
-	return r.InstallerType
+	if r.Interactive {
+		label += " (interactive)"
+	}
+	return label
 }
 
 // Installed renders the installed-package list.

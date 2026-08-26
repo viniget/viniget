@@ -197,7 +197,8 @@ def install(manifest: dict, prefix: str, base: str, cache: str, display: str = "
             v.install = "unsupported"
             return v
         v.notes.append("switches: " + (" ".join(args) or "(none)")
-                       + (" [manifest]" if switches.get("Silent") else " [viniget default]"))
+                       + (" [manifest]" if switches.get("Silent") or switches.get("SilentWithProgress")
+                          else " [viniget default]"))
         rc, _ = _run(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", "wine", payload] + args,
                      env=env, timeout=INSTALL_TIMEOUT)
 

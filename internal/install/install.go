@@ -21,6 +21,10 @@ import (
 // not treated as failure -- see Status.
 const DefaultTimeout = 240 * time.Second
 
+// DefaultInteractiveTimeout gives a person time to complete a visible generic
+// exe installer without leaving an abandoned Wine session alive indefinitely.
+const DefaultInteractiveTimeout = 15 * time.Minute
+
 // Status is the install verdict, in the same vocabulary the compat harness
 // records, so a local install and a CI verdict can be compared directly.
 type Status string
@@ -59,6 +63,7 @@ type Result struct {
 	Name           string    `json:"name,omitempty"`
 	InstallerType  string    `json:"installer_type"`
 	Container      string    `json:"container,omitempty"`
+	Interactive    bool      `json:"interactive,omitempty"`
 	Status         Status    `json:"status"`
 	Prefix         string    `json:"prefix,omitempty"`
 	Scope          string    `json:"scope,omitempty"`
@@ -88,7 +93,8 @@ type Options struct {
 	// GitHubToken optionally authenticates installer downloads hosted by
 	// GitHub. It is never attached to non-GitHub URLs.
 	GitHubToken string
-	// Timeout bounds the installer run. Zero uses DefaultTimeout.
+	// Timeout bounds the installer run. Zero uses DefaultTimeout for
+	// unattended installs and DefaultInteractiveTimeout for interactive ones.
 	Timeout time.Duration
 	// Display picks the X strategy. The zero value resolves to Headless.
 	Display wine.Display
@@ -104,9 +110,12 @@ type Options struct {
 	Progress io.Writer
 }
 
-func (o *Options) timeout() time.Duration {
+func (o *Options) timeout(interactive bool) time.Duration {
 	if o.Timeout > 0 {
 		return o.Timeout
+	}
+	if interactive {
+		return DefaultInteractiveTimeout
 	}
 	return DefaultTimeout
 }
@@ -142,10 +151,15 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 	}
 	res.InstallerType = choice.Type
 	res.Container = choice.Container
+	res.Interactive = choice.Interactive
 	res.Scope = choice.Scope
 	res.Architecture = choice.Arch
 	res.ProductCode = choice.ProductCode
 	res.FileExtensions = choice.FileExtensions
+	if choice.Interactive && os.Getenv("DISPLAY") == "" {
+		res.Status = StatusError
+		return res, fmt.Errorf("interactive exe installer requires a graphical session (DISPLAY is unset)")
+	}
 
 	if err := wine.Available(); err != nil {
 		return res, err
@@ -200,12 +214,9 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 	quirk := installQuirkFor(pkg.ID)
 	runner := &wine.Runner{
 		Prefix:       staging,
-		Display:      opt.Display,
+		Display:      installDisplay(choice, opt.Display),
 		Verbose:      opt.Verbose,
 		DLLOverrides: quirk.DLLOverrides,
-	}
-	if runner.Display.Kind == "" {
-		runner.Display = wine.Headless()
 	}
 	if opt.Verbose {
 		runner.Output = opt.Log
@@ -220,7 +231,7 @@ func Run(ctx context.Context, pkg *manifest.Package, opt Options) (*Result, erro
 		}
 		return res, err
 	}
-	runner.Settle(ctx)
+	finishWine(ctx, runner, choice.Interactive, outcome, res)
 	res.Seconds = round1(time.Since(started).Seconds())
 	res.ExitCode = outcome.Code()
 
@@ -331,7 +342,19 @@ func drive(ctx context.Context, r *wine.Runner, c *Choice, payload, prefix strin
 			res.note("switches: %s [manifest]", strings.Join(extra, " "))
 		}
 		opt.logf("installing (%s, msiexec) ...", c.Type)
-		return r.Run(ctx, opt.timeout(), args...)
+		return r.Run(ctx, opt.timeout(false), args...)
+	}
+
+	if c.Interactive {
+		args, ok := InteractiveArgs(c.Type, c.Switches)
+		if !ok {
+			return wine.Result{}, fmt.Errorf("no interactive mode for installer type %q", c.Type)
+		}
+		args = expandPlaceholders(args, logPath, installDir)
+		res.note("switches: %s [interactive]", orNone(strings.Join(args, " ")))
+		res.note("interactive installer opened on the host display")
+		opt.logf("installing (%s, interactive; complete the installer window) ...", c.Type)
+		return r.Run(ctx, opt.timeout(true), append([]string{"wine", payload}, args...)...)
 	}
 
 	args, ok := SilentArgs(c.Type, c.Switches)
@@ -346,7 +369,30 @@ func drive(ctx context.Context, r *wine.Runner, c *Choice, payload, prefix strin
 	res.note("switches: %s [%s]", orNone(strings.Join(args, " ")), source)
 
 	opt.logf("installing (%s) ...", c.Type)
-	return r.Run(ctx, opt.timeout(), append([]string{"wine", payload}, args...)...)
+	return r.Run(ctx, opt.timeout(false), append([]string{"wine", payload}, args...)...)
+}
+
+// installDisplay keeps unattended installers on their configured private
+// display while forcing an interactive generic exe onto the user's display.
+func installDisplay(c *Choice, configured wine.Display) wine.Display {
+	if c.Interactive {
+		return wine.OnHost()
+	}
+	if configured.Kind == "" {
+		return wine.Headless()
+	}
+	return configured
+}
+
+// finishWine waits for normal installer children, but an abandoned visible
+// installer has to be closed before its prefix can be scored or discarded.
+func finishWine(ctx context.Context, runner *wine.Runner, interactive bool, outcome wine.Result, res *Result) {
+	if interactive && outcome.TimedOut {
+		res.note("interactive installer timed out; closed its Wine session")
+		runner.Kill(ctx)
+		return
+	}
+	runner.Settle(ctx)
 }
 
 // installArchive places an extracted or portable payload into Program Files.

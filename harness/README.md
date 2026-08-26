@@ -55,7 +55,7 @@ pass/fail writes off every background utility in the catalog.
 
 ## Validation
 
-Six packages spanning every supported installer type, on Wine 11.16:
+Five unattended packages spanning the headless harness paths, on Wine 11.16:
 
 ```
 Notepad++.Notepad++      nullsoft  ok                     window-mapped   notepad++.exe
@@ -63,5 +63,9 @@ Greenshot.Greenshot      inno      ok                     alive-headless  Greens
 voidtools.Everything     wix       ok                     window-mapped   Everything.exe
 WinMerge.WinMerge        inno      timeout-but-installed  window-mapped   WinMergeU.exe
 SumatraPDF.SumatraPDF    portable  ok                     window-mapped   SumatraPDF-3.6.1-64.exe
-IrfanSkiljan.IrfanView   exe       unsupported            not-attempted
 ```
+
+Generic `exe` packages participate when they declare `Silent` or
+`SilentWithProgress`. GUI-only packages such as IrfanView are supported by the
+client's visible interactive fallback, but are skipped by this headless
+harness because there is no user to complete them.

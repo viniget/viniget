@@ -8,27 +8,13 @@ import (
 	"github.com/viniget/viniget/internal/manifest"
 )
 
-// AllowDeclaredExe recovers bare `exe` installers that declare their own
-// silent switch.
-//
-// v1 keeps this off. The reasoning, measured against a random sample of 199
-// manifests: 13 packages ship an `exe` as their only variant and 11 of those
-// (85%) do declare a Silent switch, so a blanket skip costs ~6.5% of the
-// catalog where skipping only the undeclared ones costs ~1.0% -- at identical
-// risk, since a declared switch is no less trustworthy on `exe` than on
-// `inno`. It stays off until v1's failure rates are known, because the
-// downside of being wrong is an interactive installer running to a timeout in
-// a prefix the user then has to clean up. viniget never guesses switches for
-// an `exe` either way.
-const AllowDeclaredExe = false
-
 // defaultSilent is the switch table viniget applies when a manifest declares
 // nothing.
 //
 // This is load-bearing, not a convenience. Only 29 of those same 199 sampled
 // manifests declare a Silent switch; the rest assume the client already knows
 // how to drive their installer type. winget hardcodes exactly this knowledge,
-// so viniget has to as well. Three of the six packages in the validation run
+// so viniget has to as well. Three of the five packages in the validation run
 // installed purely on these defaults.
 var defaultSilent = map[string][]string{
 	"nullsoft": {"/S"},
@@ -55,24 +41,25 @@ func IsMSI(t string) bool { return msiTypes[strings.ToLower(t)] }
 // IsUnsupported reports whether Wine can never run a type.
 func IsUnsupported(t string) bool { return unsupportedTypes[strings.ToLower(t)] }
 
-// Supported reports whether viniget can drive an installer of this type
-// unattended, given the switches its manifest declares.
-func Supported(t string, sw *manifest.Switches) bool {
+// Supported reports whether viniget can drive an installer of this type.
+// Generic exe installers without a declared silent mode are supported through
+// their visible UI; the other accepted types remain unattended.
+func Supported(t string, _ *manifest.Switches) bool {
 	t = strings.ToLower(t)
 	switch {
 	case archiveTypes[t], msiTypes[t]:
 		return true
 	case defaultSilent[t] != nil:
 		return true
-	case t == "exe" && AllowDeclaredExe:
-		return declaredSilent(sw) != ""
+	case t == "exe":
+		return true
 	}
 	return false
 }
 
 // SupportedTypes lists what v1 can drive, for error messages.
 func SupportedTypes() []string {
-	return []string{"burn", "inno", "msi", "nullsoft", "portable", "wix", "zip"}
+	return []string{"burn", "exe", "inno", "msi", "nullsoft", "portable", "wix", "zip"}
 }
 
 func declaredSilent(sw *manifest.Switches) string {
@@ -110,6 +97,29 @@ func SilentArgs(t string, sw *manifest.Switches) ([]string, bool) {
 	}
 
 	if sw != nil && sw.Custom != "" {
+		args = append(args, splitArgs(sw.Custom)...)
+	}
+	return args, true
+}
+
+// IsInteractive reports whether a generic exe has to be driven through its
+// visible UI. A declared Silent or SilentWithProgress switch always keeps the
+// install unattended; viniget never invents silent switches for an exe.
+func IsInteractive(t string, sw *manifest.Switches) bool {
+	return strings.EqualFold(t, "exe") && declaredSilent(sw) == ""
+}
+
+// InteractiveArgs resolves the switches Winget declares for an interactive
+// generic-exe install. Custom applies to every manifest-driven install mode,
+// including interactive. An empty successful result means the executable is
+// launched as-is and the user completes its UI.
+func InteractiveArgs(t string, sw *manifest.Switches) ([]string, bool) {
+	if !IsInteractive(t, sw) {
+		return nil, false
+	}
+	var args []string
+	if sw != nil {
+		args = append(args, splitArgs(sw.Interactive)...)
 		args = append(args, splitArgs(sw.Custom)...)
 	}
 	return args, true

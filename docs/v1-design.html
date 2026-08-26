@@ -260,7 +260,7 @@ li::marker{color:var(--wine-line)}
         <tr><td class="bar"><span style="width:27.1%"></span><em>nullsoft</em></td><td class="num">27.1%</td><td class="t"><code>/S</code> — very reliable under Wine</td><td><span class="pill p-pass">supported</span></td></tr>
         <tr><td class="bar"><span style="width:16.6%"></span><em>inno</em></td><td class="num">16.6%</td><td class="t"><code>/VERYSILENT</code> — reliable</td><td><span class="pill p-pass">supported</span></td></tr>
         <tr><td class="bar"><span style="width:13.1%"></span><em>wix</em></td><td class="num">13.1%</td><td class="t"><code>msiexec /i /qn</code></td><td><span class="pill p-pass">supported</span></td></tr>
-        <tr><td class="bar"><span style="width:7.0%"></span><em>exe</em></td><td class="num">7.0%</td><td class="t">Switches vary; 85% declare them</td><td><span class="pill p-warn">deferred</span></td></tr>
+        <tr><td class="bar"><span style="width:7.0%"></span><em>exe</em></td><td class="num">7.0%</td><td class="t">85% silent; visible GUI fallback otherwise</td><td><span class="pill p-pass">supported</span></td></tr>
         <tr><td class="bar"><span style="width:4.5%"></span><em>msi</em></td><td class="num">4.5%</td><td class="t"><code>msiexec /i /qn</code></td><td><span class="pill p-pass">supported</span></td></tr>
         <tr><td class="bar"><span style="width:1.5%"></span><em>msix</em></td><td class="num">1.5%</td><td class="t">Structurally unsupportable</td><td><span class="pill p-fail">excluded</span></td></tr>
         <tr><td class="bar"><span style="width:0.5%"></span><em>burn</em></td><td class="num">0.5%</td><td class="t"><code>/quiet /norestart</code></td><td><span class="pill p-pass">supported</span></td></tr>
@@ -291,9 +291,9 @@ li::marker{color:var(--wine-line)}
       <span class="cost">effect · results stay valid; no host-config drift</span></dd>
     </div>
     <div>
-      <dt>Defer bare <code>exe</code></dt>
-      <dd>With no declared switches there is no safe guess, and a wrong one runs an interactive installer to a timeout in a prefix the user must then clean up.
-      <span class="cost">measured cost · blanket skip loses 6.5% of the catalog; skipping only <em>undeclared</em> exe loses 1.0%, at identical risk — 11 of 13 exe-only packages sampled do declare a Silent switch. Gated behind <code>ALLOW_DECLARED_EXE</code>; one line to recover them.</span></dd>
+      <dt>Never guess for generic <code>exe</code></dt>
+      <dd>A declared <code>Silent</code> or <code>SilentWithProgress</code> switch runs unattended. Without one, viniget opens the installer on the host display and lets the user complete it instead of guessing a flag.
+      <span class="cost">measured reach · 11 of 13 exe-only packages sampled already declare a silent mode; the remaining GUI path is supported by the client but excluded from headless compatibility sweeps.</span></dd>
     </div>
   </dl>
 </section>
@@ -307,7 +307,7 @@ li::marker{color:var(--wine-line)}
     <div class="stage"><i>02</i><b>Resolve</b><span>id + version<br>→ manifest URL</span></div>
     <div class="stage"><i>03</i><b>Select</b><span>Wine-aware installer<br>choice per arch/scope</span></div>
     <div class="stage"><i>04</i><b>Prefix</b><span>reflink clone<br>rollback point</span></div>
-    <div class="stage"><i>05</i><b>Install</b><span>silent switches<br>+ delta scoring</span></div>
+    <div class="stage"><i>05</i><b>Install</b><span>manifest switches / GUI<br>+ delta scoring</span></div>
     <div class="stage"><i>06</i><b>Integrate</b><span>.lnk → .desktop<br>icon + associations</span></div>
   </div>
 
@@ -340,7 +340,7 @@ manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
   <p>That buys three things for about forty lines of code: a genuine rollback point before every install, speculative installs that can be discarded, and per-app isolation at shared-prefix cost. On ext4 the same call degrades to a real copy — slower, still correct.</p>
 
   <h3>Installer selection is Wine-aware</h3>
-  <p>Viniget deliberately does <em>not</em> prefer archive variants, even though extracting is more reliable than executing an installer. The installer is what registers Start Menu shortcuts, file associations, and icons — the metadata that desktop integration and launch-target discovery both depend on. Extraction is the fallback when no supported installer exists, not the happy path.</p>
+  <p>Viniget deliberately prefers unattended full installers over archive variants, even though extracting is more reliable. The installer is what registers Start Menu shortcuts, file associations, and icons — the metadata that desktop integration and launch-target discovery both depend on. An unattended archive still beats a generic <code>exe</code> that needs user interaction.</p>
 </section>
 
 <section>
@@ -355,7 +355,7 @@ manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
     </div>
     <div class="rule">
       <h4>Take the launch target from the Start Menu shortcut</h4>
-      <p>Matching the package name against executables on disk picks <code>WinMerge32BitPluginProxy.exe</code> over <code>WinMergeU.exe</code>. Every one of the six validation packages dropped a <code>.lnk</code> naming its real entry point.</p>
+      <p>Matching the package name against executables on disk picks <code>WinMerge32BitPluginProxy.exe</code> over <code>WinMergeU.exe</code>. Every one of the five validation packages dropped a <code>.lnk</code> naming its real entry point.</p>
       <p>So viniget ships an MS-SHLLINK parser. It feeds two consumers at once — what the harness launches, and what goes into the generated <code>.desktop</code> file. Archive packages have no shortcut; their entry point comes from <code>NestedInstallerFiles</code> in the manifest instead.</p>
     </div>
     <div class="rule">
@@ -366,7 +366,7 @@ manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
   </div>
 
   <h3>Validation run</h3>
-  <p>Six packages spanning every supported installer type, on Wine 11.16, fully headless under Xvfb:</p>
+  <p>Five packages spanning the unattended harness paths, on Wine 11.16, fully headless under Xvfb:</p>
 
   <div class="ev">
     <p class="ev-cap"><span class="tag">measured</span> harness output · SHA-256 verified on every payload</p>
@@ -375,12 +375,11 @@ Greenshot.Greenshot      inno      <span class="ok">ok</span>                   
 voidtools.Everything     wix       <span class="ok">ok</span>                     <span class="ok">window-mapped</span>   Everything.exe
 WinMerge.WinMerge        inno      <span class="wn">timeout-but-installed</span>  <span class="ok">window-mapped</span>   WinMergeU.exe
 SumatraPDF.SumatraPDF    portable  <span class="ok">ok</span>                     <span class="ok">window-mapped</span>   SumatraPDF-3.6.1-64.exe
-IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>            not-attempted
 
-<span class="c">5/6 usable under Wine · median install 8.4s</span></pre></div>
+<span class="c">5/5 usable under Wine · median install 8.4s</span></pre></div>
   </div>
 
-  <p>The default silent-switch table is load-bearing rather than a convenience. <span class="tag">measured</span> Only <strong>29 of 199</strong> sampled manifests declare a <code>Silent</code> switch — the rest assume the client already knows how to drive their installer type. Three of the six installs above succeeded purely on viniget's built-in defaults.</p>
+  <p>The default silent-switch table is load-bearing rather than a convenience. <span class="tag">measured</span> Only <strong>29 of 199</strong> sampled manifests declare a <code>Silent</code> switch — the rest assume the client already knows how to drive their installer type. Three of the five installs above succeeded purely on viniget's built-in defaults. Declared-silent generic <code>exe</code> packages can join the same sweep; GUI-only packages such as IrfanView stay out because a headless harness has no user to complete them.</p>
 </section>
 
 <section>
@@ -422,7 +421,6 @@ IrfanSkiljan.IrfanView   exe       <span class="fl">unsupported</span>          
     <li><strong>Runtime provisioning.</strong> WebView2 and .NET are the dominant real-world failure modes and neither is solved by installer automation. Does viniget map <code>WindowsFeatures</code> and <code>PackageDependencies</code> onto winetricks verbs, or report the gap and stop?</li>
     <li><strong>Opt-in outcome reporting.</strong> Real installs on real machines are far better signal than a CI container. Worth the privacy surface, or does CI-only data suffice?</li>
     <li><strong>WineHQ AppDB cross-reference.</strong> Existing ratings would seed the database for the popular tail, but matching winget IDs to AppDB entries is fuzzy.</li>
-    <li><strong>Recovering declared <code>exe</code>.</strong> The measured cost of the blanket skip is 6.5% versus 1.0%. Revisit once v1 failure rates are known.</li>
   </ul>
 </section>
 

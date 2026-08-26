@@ -61,16 +61,8 @@ func TestSilentArgsDeclaredWins(t *testing.T) {
 
 func TestSilentArgsFallsBackToSilentWithProgress(t *testing.T) {
 	args, ok := SilentArgs("exe", &manifest.Switches{SilentWithProgress: "/verysilent"})
-	if AllowDeclaredExe {
-		if !ok || !reflect.DeepEqual(args, []string{"/verysilent"}) {
-			t.Fatalf("with the exe policy on, a declared switch should be used, got %q %v", args, ok)
-		}
-		return
-	}
-	// With the v1 policy, a declared exe switch is still resolvable -- the
-	// refusal lives in Supported, which is what Select consults.
-	if !ok {
-		t.Fatalf("SilentWithProgress should resolve, got %v", ok)
+	if !ok || !reflect.DeepEqual(args, []string{"/verysilent"}) {
+		t.Fatalf("SilentWithProgress should resolve, got %q %v", args, ok)
 	}
 }
 
@@ -90,16 +82,47 @@ func TestNeverGuessesForBareExe(t *testing.T) {
 	if _, ok := SilentArgs("exe", nil); ok {
 		t.Error("viniget must never guess switches for an undeclared exe")
 	}
-	if Supported("exe", nil) {
-		t.Error("an undeclared exe is not supported")
+	if !Supported("exe", nil) {
+		t.Error("an undeclared exe should be supported through its interactive UI")
 	}
-	if !AllowDeclaredExe && Supported("exe", &manifest.Switches{Silent: "/S"}) {
-		t.Error("v1 policy is to skip exe even when switches are declared")
+	if !IsInteractive("exe", nil) {
+		t.Error("an undeclared exe should be classified as interactive")
+	}
+	if IsInteractive("exe", &manifest.Switches{Silent: "/S"}) {
+		t.Error("a declared silent exe should remain unattended")
+	}
+}
+
+func TestInteractiveArgs(t *testing.T) {
+	sw := &manifest.Switches{
+		Interactive: `/MODE="guided install" /DIR=<INSTALLPATH>`,
+		Custom:      `/LOG=<LOGPATH>`,
+	}
+	args, ok := InteractiveArgs("exe", sw)
+	if !ok {
+		t.Fatal("generic exe without silent switches should have an interactive mode")
+	}
+	args = expandPlaceholders(args, `C:\temp\install.log`, `C:\Program Files\Demo`)
+	want := []string{
+		`/MODE=guided install`,
+		`/DIR=C:\Program Files\Demo`,
+		`/LOG=C:\temp\install.log`,
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("interactive args = %q, want %q", args, want)
+	}
+
+	args, ok = InteractiveArgs("exe", nil)
+	if !ok || len(args) != 0 {
+		t.Errorf("bare exe interactive args = %q, %v; want an empty successful result", args, ok)
+	}
+	if _, ok := InteractiveArgs("exe", &manifest.Switches{Silent: "/S"}); ok {
+		t.Error("a silent exe must not resolve to interactive arguments")
 	}
 }
 
 func TestSupportedTypes(t *testing.T) {
-	for _, tt := range []string{"nullsoft", "inno", "burn", "msi", "wix", "portable", "zip"} {
+	for _, tt := range []string{"exe", "nullsoft", "inno", "burn", "msi", "wix", "portable", "zip"} {
 		if !Supported(tt, nil) {
 			t.Errorf("%s should be supported", tt)
 		}

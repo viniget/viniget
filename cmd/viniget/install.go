@@ -59,7 +59,8 @@ func resolve(ctx context.Context, cache string, noRefresh bool, name, version st
 func cmdInstall(args []string) int {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	version := fs.String("version", "", "install a specific version instead of the latest")
-	timeout := fs.Duration("timeout", install.DefaultTimeout, "how long the installer may run")
+	timeout := fs.Duration("timeout", 0,
+		"override how long the installer may run (default 4m unattended, 15m interactive)")
 	force := fs.Bool("force", false, "reinstall a package that is already installed")
 	keepFailed := fs.Bool("keep-failed", false, "keep the prefix from a failed install for inspection")
 	visible := fs.Bool("visible", false, "run the installer on your own display instead of a private Xvfb")
