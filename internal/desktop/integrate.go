@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/viniget/viniget/internal/entrypoint"
 )
 
 // Package is what desktop integration needs to know about an installed
@@ -27,9 +29,14 @@ type Package struct {
 	Extensions []string
 	// Prefix is the wine prefix the package was installed into.
 	Prefix string
-	// Entry is an archive package's declared or inferred entry point. Archive
-	// packages have no installer to write a shortcut, so this is all they have.
+	// Entry is a launch target remembered during installation. It is normally
+	// an archive package's declared or inferred target, but can also cache the
+	// filesystem fallback for an installer that created no shortcut.
 	Entry string
+	// EntrySource distinguishes an archive's manifest-derived target from an
+	// installer target previously inferred from the filesystem. Empty means
+	// manifest for compatibility with older callers and records.
+	EntrySource string
 	// DLLOverrides is the WINEDLLOVERRIDES the generated launchers carry, for
 	// the few applications that will not start under wine without one.
 	DLLOverrides string
@@ -64,8 +71,9 @@ type App struct {
 	Description string `json:"description,omitempty"`
 	// Icon names the file the icon is read out of, and which icon in it.
 	Icon IconSource `json:"-"`
-	// Source records where the app was found: the Start Menu, the Desktop, or
-	// the manifest. Only the first is authoritative.
+	// Source records where the app was found: the Start Menu, the Desktop, the
+	// manifest, or a scan of common install directories. Only the first is
+	// authoritative.
 	Source string `json:"source"`
 	// Slug distinguishes the secondary entries of a suite. The primary app
 	// has none.
@@ -111,8 +119,9 @@ func (r *Result) note(format string, a ...any) {
 // Apps discovers the launchable applications a prefix contains, best first.
 //
 // The Start Menu is the source of truth. A package that installed no shortcut
-// at all falls back to the archive entry point found during installation,
-// which is the only thing archive packages ever have.
+// at all falls back to an authoritative manifest entry or the most likely
+// executable in common Windows install locations. A cached filesystem choice
+// is rescanned so improvements to inference can repair an existing install.
 func Apps(pkg Package) []App {
 	var apps []App
 	seen := map[string]bool{}
@@ -145,23 +154,93 @@ func Apps(pkg Package) []App {
 		})
 	}
 
+	// A manifest entry is authoritative. A filesystem entry is only a cached
+	// heuristic result, so hold it in reserve and rescan first: improvements to
+	// the ranker must be able to repair an installed package without requiring
+	// a reinstall or a hand edit to installed.json.
+	cachedFilesystemEntry := ""
 	if len(apps) == 0 && pkg.Entry != "" {
 		if target := existingPath(pkg.Entry); target != "" {
-			name := pkg.Name
-			if name == "" {
-				name = strings.TrimSuffix(filepath.Base(target), filepath.Ext(target))
+			source := pkg.EntrySource
+			if source == "" {
+				source = "manifest"
 			}
-			apps = append(apps, App{
-				Name:   name,
-				Target: target,
-				Icon:   IconSource{Path: target},
-				Source: "manifest",
-			})
+			if source == "filesystem" {
+				cachedFilesystemEntry = target
+			} else {
+				apps = append(apps, entryApp(pkg, target, source))
+			}
 		}
+	}
+
+	if len(apps) == 0 {
+		if target := inferInstalledEntry(pkg); target != "" {
+			apps = append(apps, entryApp(pkg, target, "filesystem"))
+		}
+	}
+	// Preserve a still-existing cached target when the bounded scan cannot see
+	// it. Older records may name a legitimate unconventional install location.
+	if len(apps) == 0 && cachedFilesystemEntry != "" {
+		apps = append(apps, entryApp(pkg, cachedFilesystemEntry, "filesystem"))
 	}
 
 	assignSlugs(apps)
 	return apps
+}
+
+func entryApp(pkg Package, target, source string) App {
+	name := pkg.Name
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(target), filepath.Ext(target))
+	}
+	app := App{
+		Name:   name,
+		Target: target,
+		Icon:   IconSource{Path: target},
+		Source: source,
+	}
+	if source == "filesystem" {
+		app.WorkingDir = filepath.Dir(target)
+	}
+	return app
+}
+
+// installRootGlobs are locations Windows installers conventionally use for
+// application binaries. Windows itself is deliberately absent: a Wine prefix
+// contains many executables there before a package is installed, and none is
+// a package launch target.
+var installRootGlobs = []struct {
+	glob string
+	skip []string
+}{
+	{"drive_c/Program Files", nil},
+	{"drive_c/Program Files (x86)", nil},
+	{"drive_c/ProgramData", nil},
+	{"drive_c/users/*/AppData/Local", []string{"Temp"}},
+	{"drive_c/users/*/AppData/Roaming", nil},
+}
+
+// inferInstalledEntry is the last resort for an installer that created no
+// Start Menu or Desktop shortcut. Scanning is bounded to conventional install
+// roots, and the shared ranker rejects obvious uninstallers, updaters, setup
+// programs and crash helpers.
+func inferInstalledEntry(pkg Package) string {
+	var roots []entrypoint.Root
+	baseline := filepath.Join(filepath.Dir(pkg.Prefix), "base")
+	for _, spec := range installRootGlobs {
+		matches, _ := filepath.Glob(filepath.Join(pkg.Prefix, filepath.FromSlash(spec.glob)))
+		for _, match := range matches {
+			rel, err := filepath.Rel(pkg.Prefix, match)
+			if err != nil {
+				continue
+			}
+			roots = append(roots, entrypoint.Root{
+				Path: match, Baseline: filepath.Join(baseline, rel), SkipDirs: spec.skip,
+			})
+		}
+	}
+	target, _ := entrypoint.Infer(roots, pkg.ID, pkg.Name)
+	return target
 }
 
 // iconSourceFor picks where an app's icon is read from: the shortcut's own
@@ -242,7 +321,7 @@ func Integrate(pkg Package, opt Options) (*Result, error) {
 
 	apps := Apps(pkg)
 	if len(apps) == 0 {
-		res.note("nothing launchable found: no Start Menu shortcut resolved to an executable, and no archive entry point was declared or inferred")
+		res.note("nothing launchable found: no shortcut or archive entry point resolved to an executable, and none was inferred from common install directories")
 		return res, nil
 	}
 

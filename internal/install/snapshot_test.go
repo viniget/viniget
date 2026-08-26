@@ -44,6 +44,29 @@ func TestSnapshotToleratesMissingTrees(t *testing.T) {
 	}
 }
 
+func TestSnapshotIncludesCommonInstallTrees(t *testing.T) {
+	prefix := t.TempDir()
+	files := []string{
+		"drive_c/Program Files/App/app.exe",
+		"drive_c/Program Files (x86)/App/app.exe",
+		"drive_c/ProgramData/App/app.exe",
+		"drive_c/users/me/AppData/Local/Programs/App/app.exe",
+	}
+	for _, rel := range files {
+		touch(t, prefix, rel)
+	}
+
+	got, err := snapshot(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range files {
+		if _, ok := got[filepath.FromSlash(rel)]; !ok {
+			t.Errorf("snapshot missed %s: %v", rel, got)
+		}
+	}
+}
+
 func TestDiffCountsExecutables(t *testing.T) {
 	prefix := t.TempDir()
 	touch(t, prefix, "drive_c/Program Files/App/old.dll")

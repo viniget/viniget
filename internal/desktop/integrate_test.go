@@ -242,6 +242,145 @@ func TestIntegrateFallsBackToManifestEntry(t *testing.T) {
 	}
 }
 
+func TestAppsInfersEntryFromCommonInstallLocations(t *testing.T) {
+	locations := map[string]string{
+		"program-files":     "drive_c/Program Files/Demo/Demo.exe",
+		"program-files-x86": "drive_c/Program Files (x86)/Demo/Demo.exe",
+		"program-data":      "drive_c/ProgramData/Demo/Demo.exe",
+		"local-app-data":    "drive_c/users/test/AppData/Local/Programs/Demo/Demo.exe",
+		"roaming-app-data":  "drive_c/users/test/AppData/Roaming/Demo/Demo.exe",
+	}
+
+	for name, rel := range locations {
+		t.Run(name, func(t *testing.T) {
+			prefix := t.TempDir()
+			target := filepath.Join(prefix, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("MZ"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// A helper resembling the package must not outrank its main binary.
+			if err := os.WriteFile(filepath.Join(filepath.Dir(target), "DemoUpdater.exe"), []byte("MZ"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			apps := Apps(Package{ID: "Vendor.Demo", Name: "Demo App", Prefix: prefix})
+			if len(apps) != 1 {
+				t.Fatalf("apps = %+v, want one inferred entry", apps)
+			}
+			if apps[0].Target != target {
+				t.Errorf("target = %q, want %q", apps[0].Target, target)
+			}
+			if apps[0].Name != "Demo App" || apps[0].Source != "filesystem" {
+				t.Errorf("app = %+v, want the package name from a filesystem scan", apps[0])
+			}
+			if apps[0].WorkingDir != filepath.Dir(target) {
+				t.Errorf("working directory = %q, want %q", apps[0].WorkingDir, filepath.Dir(target))
+			}
+		})
+	}
+}
+
+func TestAppsReinfersCachedFilesystemEntry(t *testing.T) {
+	prefix := t.TempDir()
+	appDir := filepath.Join(prefix, "drive_c", "Program Files", "WinRAR")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(appDir, "Rar.exe")
+	want := filepath.Join(appDir, "WinRAR.exe")
+	for _, path := range []string{stale, want} {
+		if err := os.WriteFile(path, []byte("MZ"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	apps := Apps(Package{
+		ID: "RARLab.WinRAR", Name: "WinRAR", Prefix: prefix,
+		Entry: stale, EntrySource: "filesystem",
+	})
+	if len(apps) != 1 || apps[0].Target != want {
+		t.Fatalf("apps = %+v, want rescanned entry %q", apps, want)
+	}
+	if apps[0].Source != "filesystem" {
+		t.Errorf("source = %q, want filesystem", apps[0].Source)
+	}
+}
+
+func TestAppsKeepsCachedFilesystemEntryOutsideScanRoots(t *testing.T) {
+	prefix := t.TempDir()
+	target := filepath.Join(prefix, "drive_c", "Tools", "Demo.exe")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("MZ"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	apps := Apps(Package{
+		ID: "Vendor.Demo", Name: "Demo", Prefix: prefix,
+		Entry: target, EntrySource: "filesystem",
+	})
+	if len(apps) != 1 || apps[0].Target != target {
+		t.Fatalf("apps = %+v, want cached unconventional entry %q", apps, target)
+	}
+}
+
+func TestAppsDoesNotInferFromWindowsOrInstallerTemp(t *testing.T) {
+	prefix := t.TempDir()
+	for _, rel := range []string{
+		"drive_c/windows/system32/Demo.exe",
+		"drive_c/users/test/AppData/Local/Temp/Demo.exe",
+	} {
+		path := filepath.Join(prefix, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("MZ"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if apps := Apps(Package{ID: "Vendor.Demo", Name: "Demo", Prefix: prefix}); len(apps) != 0 {
+		t.Errorf("apps = %+v; Windows and installer temp executables are not package entry points", apps)
+	}
+}
+
+func TestAppsExcludesBaselineExecutables(t *testing.T) {
+	prefixes := t.TempDir()
+	base := filepath.Join(prefixes, "base")
+	prefix := filepath.Join(prefixes, "Vendor.Demo")
+	for _, root := range []string{base, prefix} {
+		builtin := filepath.Join(root, "drive_c", "Program Files", "Internet Explorer", "iexplore.exe")
+		if err := os.MkdirAll(filepath.Dir(builtin), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(builtin, []byte("MZ"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if apps := Apps(Package{ID: "Vendor.Demo", Name: "Demo", Prefix: prefix}); len(apps) != 0 {
+		t.Fatalf("apps = %+v; executables inherited from the baseline must be ignored", apps)
+	}
+
+	// The executable name is deliberately generic. Its package-named parent
+	// and its absence from the baseline are the useful signals.
+	target := filepath.Join(prefix, "drive_c", "Program Files", "Demo", "bin", "runtime.exe")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("MZ"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	apps := Apps(Package{ID: "Vendor.Demo", Name: "Demo", Prefix: prefix})
+	if len(apps) != 1 || apps[0].Target != target {
+		t.Errorf("apps = %+v, want only the package executable %q", apps, target)
+	}
+}
+
 func TestIntegrateWithNothingLaunchable(t *testing.T) {
 	// A runtime or a codec that installed correctly and put nothing in the
 	// Start Menu has behaved exactly as intended.

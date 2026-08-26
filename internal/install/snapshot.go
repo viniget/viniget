@@ -8,7 +8,9 @@ import (
 	"strings"
 )
 
-// scoreDirs are the trees an install is scored on.
+// scoreDirs are the trees an install is scored on. They are also the common
+// locations desktop integration searches when an installer creates no
+// shortcut.
 //
 // Deliberately not the whole prefix. Wine itself writes to the registry, to
 // drive_c/windows and to the user's temp directory on any run at all, so
@@ -16,6 +18,7 @@ import (
 var scoreDirs = []string{
 	"drive_c/Program Files",
 	"drive_c/Program Files (x86)",
+	"drive_c/ProgramData",
 	"drive_c/users",
 }
 

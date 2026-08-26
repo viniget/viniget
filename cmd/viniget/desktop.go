@@ -28,6 +28,7 @@ func desktopPackage(rec install.Record, pkg *manifest.Package, overrides *string
 		Version:      rec.Version,
 		Prefix:       rec.Prefix,
 		Entry:        rec.Entry,
+		EntrySource:  recordedEntrySource(rec.InstallerType),
 		DLLOverrides: resolveOverrides(overrides, rec.ID),
 	}
 	if pkg == nil {
@@ -48,6 +49,16 @@ func desktopPackage(rec install.Record, pkg *manifest.Package, overrides *string
 		}
 	}
 	return d
+}
+
+// recordedEntrySource recovers the provenance of the cached target without a
+// state migration. Extraction-based packages get their target from their
+// payload or manifest; installer targets are shortcuts or filesystem finds.
+func recordedEntrySource(installerType string) string {
+	if installerType != "" && !install.IsArchive(installerType) {
+		return "filesystem"
+	}
+	return "manifest"
 }
 
 // resolveOverrides decides what WINEDLLOVERRIDES a launcher carries: what was
@@ -308,6 +319,7 @@ func cmdRun(args []string) int {
 func writeLauncher(rec install.Record, dirs desktop.Dirs, slug string) (string, error) {
 	apps := desktop.Apps(desktop.Package{
 		ID: rec.ID, Name: rec.Name, Prefix: rec.Prefix, Entry: rec.Entry,
+		EntrySource: recordedEntrySource(rec.InstallerType),
 	})
 	var app *desktop.App
 	for i := range apps {

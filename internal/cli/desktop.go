@@ -103,6 +103,8 @@ func sourceLabel(source string) string {
 		return "Desktop shortcut"
 	case "manifest":
 		return "manifest entry point"
+	case "filesystem":
+		return "installed files scan"
 	}
 	return source
 }

@@ -356,7 +356,7 @@ manifests/m/Microsoft/VisualStudioCode/1.134.0/<span class="fl">b90d</span>
     <div class="rule">
       <h4>Take the launch target from the Start Menu shortcut</h4>
       <p>Matching the package name against executables on disk picks <code>WinMerge32BitPluginProxy.exe</code> over <code>WinMergeU.exe</code>. Every one of the five validation packages dropped a <code>.lnk</code> naming its real entry point.</p>
-      <p>So viniget ships an MS-SHLLINK parser. It feeds two consumers at once — what the harness launches, and what goes into the generated <code>.desktop</code> file. Archive packages have no shortcut; their entry point comes from <code>NestedInstallerFiles</code> in the manifest instead.</p>
+      <p>So viniget ships an MS-SHLLINK parser. It feeds two consumers at once — what the harness launches, and what goes into the generated <code>.desktop</code> file. Archive packages have no shortcut; their entry point comes from <code>NestedInstallerFiles</code> in the manifest instead. When a full installer also omits its shortcut, the client uses the same executable-ranking fallback over Program Files, Program Files (x86), ProgramData and per-user AppData, while excluding files inherited from the pristine Wine prefix.</p>
     </div>
     <div class="rule">
       <h4>Outcomes are three-way, not pass/fail</h4>

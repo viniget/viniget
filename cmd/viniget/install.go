@@ -269,6 +269,7 @@ func integrate(res *install.Result, pkg *manifest.Package, dataDir string, skip,
 		Version:      res.Version,
 		Prefix:       res.Prefix,
 		Entry:        res.Entry,
+		EntrySource:  recordedEntrySource(res.InstallerType),
 		Extensions:   res.FileExtensions,
 		DLLOverrides: resolveOverrides(overrides, res.ID),
 	}
