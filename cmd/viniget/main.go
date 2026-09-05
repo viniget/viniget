@@ -1,9 +1,10 @@
 // Command viniget installs winget packages on Linux.
 //
-// Search, show and update are pure metadata and need no Wine at all. Install
-// is where Wine enters: it picks the variant Wine can drive, downloads it,
-// clones the baseline prefix, runs it silently or through its visible UI, and
-// scores the result on the filesystem delta rather than the exit code.
+// Search, show and refreshing the index are pure metadata and need no Wine at
+// all. Install and package updates are where Wine enters: they pick the
+// variant Wine can drive, download it, clone the baseline prefix, run it
+// silently or through its visible UI, and score the result on the filesystem
+// delta rather than the exit code.
 package main
 
 import (
@@ -30,7 +31,7 @@ Usage:
   viniget run <id>        Launch an installed package
   viniget list            List installed packages
   viniget desktop <id>    Regenerate menu entries, icons and associations
-  viniget update          Refresh the package index
+  viniget update [<id>]   Refresh the index, or upgrade a package to latest
 
 An <id> is a full package identifier. Install also accepts an exact moniker --
 the short name in search's MONIKER column -- when it names one package.
@@ -210,13 +211,9 @@ func cmdShow(args []string) int {
 	return 0
 }
 
-func cmdUpdate(args []string) int {
-	fs := flag.NewFlagSet("update", flag.ExitOnError)
-	cache := fs.String("cache", "", "index cache directory")
-	parseArgs(fs, args)
-
+func refreshIndex(cache string) int {
 	ctx := context.Background()
-	store := index.NewStore(*cache)
+	store := index.NewStore(cache)
 	first := false
 	if _, err := os.Stat(store.DBPath()); err != nil {
 		first = true

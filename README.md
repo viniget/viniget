@@ -19,8 +19,8 @@ Wine 11 regression requires the known-good Wine 10 build described below.
 
 ## Status
 
-The index client is built — `search`, `show` and `update` against the public
-winget index, with no Wine involved.
+The index client is built — `search`, `show` and a no-argument `update` against
+the public winget index, with no Wine involved.
 
 ```
 $ viniget search firefox --limit 3
@@ -37,6 +37,21 @@ prefix, and scores what landed on disk. Known installer formats and generic
 Xvfb. A generic `exe` without them opens its installer on the host display for
 the user to complete. The command takes a package identifier or the moniker in
 search's `MONIKER` column — `viniget install firefox` is `Mozilla.Firefox`.
+
+An installed package can be upgraded to the latest version in the index by
+its package identifier:
+
+```sh
+viniget update Mozilla.Firefox
+```
+
+If that version is already installed, the command stops before Wine or the
+manifest download is needed. Otherwise it installs into a staging prefix and
+only replaces the live prefix after the new version scores as installed, so a
+failed update leaves the previous version intact. Recorded runtime helpers and
+launcher DLL overrides carry forward. Running `viniget update` without a
+package identifier retains its original meaning and refreshes the package
+index.
 
 So is desktop integration. The install ends by reading the Start Menu shortcut
 the installer wrote, which is where the launch target normally comes from — and

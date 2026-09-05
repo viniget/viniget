@@ -15,6 +15,17 @@ import (
 // verdict rests on: viniget scores an install on the filesystem delta, so
 // "ok" with 0 new files would be a bug worth seeing.
 func InstallResult(w io.Writer, r *install.Result) error {
+	return packageResult(w, r, "")
+}
+
+// UpdateResult renders an install attempt made by `viniget update`, naming
+// both sides of the version change while keeping the same evidence table as a
+// first install.
+func UpdateResult(w io.Writer, r *install.Result, previousVersion string) error {
+	return packageResult(w, r, previousVersion)
+}
+
+func packageResult(w io.Writer, r *install.Result, previousVersion string) error {
 	name := r.Name
 	if name == "" {
 		name = r.ID
@@ -22,10 +33,19 @@ func InstallResult(w io.Writer, r *install.Result) error {
 
 	switch r.Status {
 	case install.StatusOK:
-		fmt.Fprintf(w, "installed %s %s\n", name, r.Version)
+		if previousVersion != "" {
+			fmt.Fprintf(w, "updated %s %s -> %s\n", name, previousVersion, r.Version)
+		} else {
+			fmt.Fprintf(w, "installed %s %s\n", name, r.Version)
+		}
 	case install.StatusTimeoutInstalled:
-		fmt.Fprintf(w, "installed %s %s (installer ran past its timeout; the files are all there)\n",
-			name, r.Version)
+		if previousVersion != "" {
+			fmt.Fprintf(w, "updated %s %s -> %s (installer ran past its timeout; the files are all there)\n",
+				name, previousVersion, r.Version)
+		} else {
+			fmt.Fprintf(w, "installed %s %s (installer ran past its timeout; the files are all there)\n",
+				name, r.Version)
+		}
 	default:
 		fmt.Fprintf(w, "%s %s: %s\n", name, r.Version, r.Status)
 	}

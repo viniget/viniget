@@ -20,12 +20,13 @@ import (
 	"github.com/viniget/viniget/internal/wine"
 )
 
-// resolve turns a package identifier or moniker into a fully fetched
-// manifest. Version may be empty, in which case the index's latest is used.
-func resolve(ctx context.Context, cache string, noRefresh bool, name, version string) (*manifest.Package, error) {
+// lookupPackage resolves a package identifier or moniker against the index
+// without fetching its manifest. Keeping the cheap lookup separate lets
+// `update` report an already-current package without touching Wine or GitHub.
+func lookupPackage(ctx context.Context, cache string, noRefresh bool, name string) (*index.Package, *index.Store, error) {
 	cat, store, err := openCatalog(ctx, cache, noRefresh)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer cat.Close()
 
@@ -35,13 +36,19 @@ func resolve(ctx context.Context, cache string, noRefresh bool, name, version st
 		if errors.As(err, &ambiguous) {
 			// Passed through unwrapped: the caller prints the candidates, and
 			// a list of identifiers is the whole of the useful answer here.
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, fmt.Errorf("lookup: %w", err)
+		return nil, nil, fmt.Errorf("lookup: %w", err)
 	}
 	if pkg == nil {
-		return nil, fmt.Errorf("no package with id or moniker %q (try: viniget search %s)", name, name)
+		return nil, nil, fmt.Errorf("no package with id or moniker %q (try: viniget search %s)", name, name)
 	}
+	return pkg, store, nil
+}
+
+// fetchPackage expands an index row into the complete manifest used by the
+// installer. Version may be empty, in which case the index's latest is used.
+func fetchPackage(ctx context.Context, store *index.Store, pkg *index.Package, version string) (*manifest.Package, error) {
 	if version == "" {
 		version = pkg.Version
 	}
@@ -57,18 +64,45 @@ func resolve(ctx context.Context, cache string, noRefresh bool, name, version st
 	return full, nil
 }
 
-func cmdInstall(args []string) int {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
+// resolve turns a package identifier or moniker into a fully fetched
+// manifest. Version may be empty, in which case the index's latest is used.
+func resolve(ctx context.Context, cache string, noRefresh bool, name, version string) (*manifest.Package, error) {
+	pkg, store, err := lookupPackage(ctx, cache, noRefresh, name)
+	if err != nil {
+		return nil, err
+	}
+	return fetchPackage(ctx, store, pkg, version)
+}
+
+func cmdInstall(args []string) int { return cmdInstallOrUpdate(args, false) }
+
+// cmdUpdate keeps the historical no-argument index refresh and treats a
+// package identifier as an atomic reinstall at the newest indexed version.
+func cmdUpdate(args []string) int { return cmdInstallOrUpdate(args, true) }
+
+func cmdInstallOrUpdate(args []string, updating bool) int {
+	command := "install"
+	if updating {
+		command = "update"
+	}
+	fs := flag.NewFlagSet(command, flag.ExitOnError)
 	var with stringList
-	version := fs.String("version", "", "install a specific version instead of the latest")
+	version := ""
+	if !updating {
+		fs.StringVar(&version, "version", "", "install a specific version instead of the latest")
+	}
 	timeout := fs.Duration("timeout", 0,
 		"override how long the installer may run (default 4m unattended, 15m interactive)")
-	force := fs.Bool("force", false, "reinstall a package that is already installed")
+	force := false
+	resetHelpers := false
+	if !updating {
+		fs.BoolVar(&force, "force", false, "reinstall a package that is already installed")
+		fs.BoolVar(&resetHelpers, "reset-helpers", false, "with -force, do not preserve helpers recorded by the previous install")
+	}
 	keepFailed := fs.Bool("keep-failed", false, "keep the prefix from a failed install for inspection")
 	fs.Var(&with, "with", "install a required helper verb before the package (repeatable)")
 	noAutoHelpers := fs.Bool("no-auto-helpers", false, "do not infer helpers from manifest dependencies")
 	helperTimeout := fs.Duration("helper-timeout", helper.DefaultTimeout, "maximum runtime for each helper verb")
-	resetHelpers := fs.Bool("reset-helpers", false, "with -force, do not preserve helpers recorded by the previous install")
 	visible := fs.Bool("visible", false, "run the installer on your own display instead of a private Xvfb")
 	verbose := fs.Bool("verbose", false, "show wine's own output")
 	noDesktop := fs.Bool("no-desktop", false, "do not generate a menu entry, icon or file associations")
@@ -80,7 +114,20 @@ func cmdInstall(args []string) int {
 	dllOverrides := fs.String("dll-overrides", "",
 		"WINEDLLOVERRIDES for the generated launcher; pass it empty to drop the one viniget applies by default")
 	rest := parseArgs(fs, args)
-	if *resetHelpers && !*force {
+	if updating && len(rest) == 0 {
+		packageFlag := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "cache" {
+				packageFlag = true
+			}
+		})
+		if packageFlag {
+			fmt.Fprintln(os.Stderr, "usage: viniget update [-cache <dir>] [<package-id>]")
+			return 2
+		}
+		return refreshIndex(*cache)
+	}
+	if resetHelpers && !force {
 		fmt.Fprintln(os.Stderr, "viniget: -reset-helpers requires -force")
 		return 2
 	}
@@ -101,11 +148,11 @@ func cmdInstall(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: viniget install <package-id|moniker>")
 		return 2
 	}
-	name := rest[0]
-
-	if err := wine.Available(); err != nil {
-		return errf("%v", err)
+	if updating && len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: viniget update [flags] <package-id>")
+		return 2
 	}
+	name := rest[0]
 
 	ctx := context.Background()
 	prefixes := wine.NewStore(*dataDir)
@@ -114,26 +161,69 @@ func cmdInstall(args []string) int {
 		return errf("%v", err)
 	}
 
-	pkg, err := resolve(ctx, *cache, *noRefresh, name, *version)
-	if err != nil {
-		var ambiguous *index.AmbiguousError
-		if errors.As(err, &ambiguous) {
-			return ambiguousf(ambiguous)
+	var (
+		pkg                 *manifest.Package
+		prev                install.Record
+		previouslyInstalled bool
+	)
+	if updating {
+		prev, previouslyInstalled = db.Get(name)
+		if !previouslyInstalled {
+			return errf("%s is not installed (try: viniget list)", name)
 		}
-		return errf("%v", err)
-	}
-	// A moniker is a nickname several packages may answer to, so the
-	// identifier it landed on is worth stating before anything is downloaded.
-	if !strings.EqualFold(name, pkg.ID) {
-		fmt.Fprintf(os.Stderr, "%s is %s\n", name, pkg.ID)
-	}
+		indexed, store, lookupErr := lookupPackage(ctx, *cache, *noRefresh, prev.ID)
+		if lookupErr != nil {
+			return errf("%v", lookupErr)
+		}
+		if prev.Version == indexed.Version {
+			if *asJSON {
+				out := updateCheck(prev, indexed.Version, false)
+				if err := cli.JSON(os.Stdout, out); err != nil {
+					return errf("%v", err)
+				}
+			} else {
+				fmt.Printf("%s %s is already current\n", displayRecordName(prev), prev.Version)
+			}
+			return 0
+		}
+		if err := wine.Available(); err != nil {
+			return errf("%v", err)
+		}
+		pkg, err = fetchPackage(ctx, store, indexed, "")
+		if err != nil {
+			return errf("%v", err)
+		}
+		if overrides == nil {
+			overrides = prev.DLLOverrides
+		}
+		if !*asJSON {
+			fmt.Fprintf(os.Stderr, "updating %s %s to %s ...\n", prev.ID, prev.Version, pkg.Version)
+		}
+	} else {
+		if err := wine.Available(); err != nil {
+			return errf("%v", err)
+		}
+		pkg, err = resolve(ctx, *cache, *noRefresh, name, version)
+		if err != nil {
+			var ambiguous *index.AmbiguousError
+			if errors.As(err, &ambiguous) {
+				return ambiguousf(ambiguous)
+			}
+			return errf("%v", err)
+		}
+		// A moniker is a nickname several packages may answer to, so the
+		// identifier it landed on is worth stating before anything is downloaded.
+		if !strings.EqualFold(name, pkg.ID) {
+			fmt.Fprintf(os.Stderr, "%s is %s\n", name, pkg.ID)
+		}
 
-	prev, previouslyInstalled := db.Get(pkg.ID)
-	if previouslyInstalled && !*force {
-		fmt.Fprintf(os.Stderr,
-			"%s %s is already installed in %s\nreinstall it with: viniget install %s -force\n",
-			prev.ID, prev.Version, prev.Prefix, prev.ID)
-		return 1
+		prev, previouslyInstalled = db.Get(pkg.ID)
+		if previouslyInstalled && !force {
+			fmt.Fprintf(os.Stderr,
+				"%s %s is already installed in %s\nreinstall it with: viniget install %s -force\n",
+				prev.ID, prev.Version, prev.Prefix, prev.ID)
+			return 1
+		}
 	}
 
 	log := io.Writer(os.Stderr)
@@ -152,7 +242,7 @@ func cmdInstall(args []string) int {
 		HelperTimeout:   *helperTimeout,
 		Log:             log,
 	}
-	if previouslyInstalled && !*resetHelpers {
+	if previouslyInstalled && !resetHelpers {
 		opt.RecordedHelpers = append([]string(nil), prev.Helpers...)
 	}
 	if log != nil && isTerminal(os.Stderr) {
@@ -177,6 +267,10 @@ func cmdInstall(args []string) int {
 		rec.DLLOverrides = overrides
 		if integration != nil {
 			rec.Entry, rec.Desktop = res.Entry, integration.Files
+		} else if updating {
+			// -no-desktop skips regeneration; keep the paths already on disk
+			// recorded so a later uninstall can still remove them exactly.
+			rec.Desktop = append([]string(nil), prev.Desktop...)
 		}
 		db.Put(rec)
 		if err := db.Save(); err != nil {
@@ -192,8 +286,15 @@ func cmdInstall(args []string) int {
 		}
 		out := struct {
 			*install.Result
-			Desktop *desktop.Result `json:"desktop,omitempty"`
-		}{res, integration}
+			PreviousVersion string          `json:"previous_version,omitempty"`
+			Updated         *bool           `json:"updated,omitempty"`
+			Desktop         *desktop.Result `json:"desktop,omitempty"`
+		}{Result: res, Desktop: integration}
+		if updating {
+			updated := res.Status.Installed()
+			out.PreviousVersion = prev.Version
+			out.Updated = &updated
+		}
 		if err := cli.JSON(os.Stdout, out); err != nil {
 			return errf("%v", err)
 		}
@@ -207,8 +308,14 @@ func cmdInstall(args []string) int {
 		}
 		return errf("%v", runErr)
 	}
-	if err := cli.InstallResult(os.Stdout, res); err != nil {
-		return errf("%v", err)
+	var renderErr error
+	if updating {
+		renderErr = cli.UpdateResult(os.Stdout, res, prev.Version)
+	} else {
+		renderErr = cli.InstallResult(os.Stdout, res)
+	}
+	if renderErr != nil {
+		return errf("%v", renderErr)
 	}
 	if integration != nil {
 		if err := cli.DesktopResult(os.Stdout, integration); err != nil {
@@ -223,6 +330,28 @@ func cmdInstall(args []string) int {
 		}
 	}
 	return exitFor(res, runErr)
+}
+
+type updateState struct {
+	ID              string `json:"id"`
+	Name            string `json:"name,omitempty"`
+	PreviousVersion string `json:"previous_version"`
+	Version         string `json:"version"`
+	Updated         bool   `json:"updated"`
+}
+
+func updateCheck(rec install.Record, version string, updated bool) updateState {
+	return updateState{
+		ID: rec.ID, Name: rec.Name, PreviousVersion: rec.Version,
+		Version: version, Updated: updated,
+	}
+}
+
+func displayRecordName(rec install.Record) string {
+	if rec.Name != "" {
+		return rec.Name
+	}
+	return rec.ID
 }
 
 // stringList implements a repeatable string flag without accepting a

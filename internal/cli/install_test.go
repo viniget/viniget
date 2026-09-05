@@ -43,6 +43,20 @@ func TestInstallResultRendersHelpers(t *testing.T) {
 	}
 }
 
+func TestUpdateResultNamesBothVersions(t *testing.T) {
+	var out bytes.Buffer
+	err := UpdateResult(&out, &install.Result{
+		ID: "Vendor.Demo", Name: "Demo", Version: "2.0",
+		InstallerType: "portable", Status: install.StatusOK,
+	}, "1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "updated Demo 1.0 -> 2.0") {
+		t.Errorf("output did not identify the version change:\n%s", out.String())
+	}
+}
+
 func TestInstalledListRendersRecordedHelpers(t *testing.T) {
 	var out bytes.Buffer
 	if err := Installed(&out, []install.Record{{ID: "Vendor.Demo", Helpers: []string{"dotnet48"}}}); err != nil {
